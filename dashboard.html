@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Domuto | Visual Browser Automation</title>
+  <link rel="icon" type="image/png" href="ico.png" />
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <!-- Left Sidebar: Projects -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="brand" style="width:100%;">
+        <img src="dash_logo.png" alt="Domuto — Local & Private Browser Automation" class="brand-full-logo" />
+      </div>
+    </div>
+
+    <div class="sidebar-actions">
+      <button class="btn btn-primary" id="btn-create-project" style="flex:1;">
+        + New Project
+      </button>
+    </div>
+
+    <div class="project-list" id="project-list"></div>
+
+    <div class="sidebar-footer">
+      <button class="btn btn-secondary btn-sm" id="btn-export-json" style="flex:1;" title="Export project JSON">
+        ⬇ Backup JSON
+      </button>
+      <label class="btn btn-secondary btn-sm" style="flex:1;cursor:pointer;" title="Import project JSON">
+        ⬆ Import JSON
+        <input type="file" id="input-import-json" accept=".json" style="display:none;" />
+      </label>
+    </div>
+  </aside>
+
+  <!-- Main Studio Workspace -->
+  <main class="workspace">
+    <!-- Top Header Bar -->
+    <header class="topbar">
+      <div class="proj-header-inputs">
+        <input type="text" id="proj-name-input" class="proj-title-input" placeholder="Project Name" />
+        <input type="text" id="proj-desc-input" class="proj-desc-input" placeholder="Short description of this automation workflow..." />
+      </div>
+
+      <!-- Tag-Manager Style Domain Launcher -->
+      <div class="domain-launcher">
+        <span class="domain-launcher-label">Target Domain</span>
+        <input type="text" id="proj-domain-input" class="domain-input" placeholder="https://example.com" />
+        <button class="btn btn-primary btn-sm" id="btn-launch-tag-builder" title="Opens this domain with the interactive Tag-Assistant Element Picker HUD attached!">
+          🎯 Open Domain & Map Elements
+        </button>
+      </div>
+
+      <!-- Run & Delete Controls -->
+      <div class="topbar-controls">
+        <button class="btn btn-secondary btn-sm" id="btn-open-ai-modal" style="border-color:#6366f1;color:#c7d2fe;" title="Export this project in an AI-ready format for ChatGPT/Claude/Gemini, or import AI-edited workflow steps back!">
+          🤖 AI Export / Import
+        </button>
+        <button class="btn btn-success" id="btn-run-workflow">
+          ▶ Run Workflow
+        </button>
+        <button class="btn btn-danger btn-sm" id="btn-delete-project" title="Delete Project">
+          🗑
+        </button>
+      </div>
+    </header>
+
+    <!-- Studio Sub-Navigation Tabs -->
+    <nav class="studio-tabs">
+      <div class="tab-group">
+        <button class="tab-btn active" data-tab="steps">
+          <span>1. Workflow Steps & Sequencer</span>
+          <span class="tab-badge" id="badge-step-count">0</span>
+        </button>
+        <button class="tab-btn" data-tab="csv">
+          <span>2. Project Master CSV</span>
+          <span class="tab-badge" id="badge-csv-count">0 rows</span>
+        </button>
+        <button class="tab-btn" data-tab="results">
+          <span>3. Live Run Logs & Extracted Results</span>
+          <span class="tab-badge" id="badge-results-count">0</span>
+        </button>
+      </div>
+
+      <div id="builder-connection-indicator" style="font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:8px;"></div>
+    </nav>
+
+    <!-- Main Scrollable Content -->
+    <div class="studio-content">
+      <!-- Live Runner Banner (shown whenever a workflow is running or paused) -->
+      <div id="live-runner-banner" class="runner-status-banner" style="display:none;">
+        <div>
+          <div style="font-size:11px;font-weight:800;color:#34d399;text-transform:uppercase;" id="runner-banner-status">
+            RUNNING WORKFLOW
+          </div>
+          <div style="font-size:14px;font-weight:700;color:#fff;margin-top:2px;" id="runner-banner-step">
+            Initializing...
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="tab-badge" id="runner-banner-progress" style="font-size:12px;padding:4px 10px;">Row 1 / 1</span>
+          <button class="btn btn-secondary btn-sm" id="btn-banner-pause">⏸ Pause</button>
+          <button class="btn btn-danger btn-sm" id="btn-banner-stop">⏹ Stop</button>
+        </div>
+      </div>
+
+      <!-- TAB 1: WORKFLOW STEPS & SEQUENCER -->
+      <section class="tab-pane active" id="tab-steps">
+        <div class="add-step-bar">
+          <div>
+            <div style="font-weight:700;font-size:13.5px;">Add Step to Sequence</div>
+            <div style="font-size:11.5px;color:#94a3b8;">
+              Add steps manually below, or click <b>"🎯 Open Domain & Map Elements"</b> above to visually click elements on the live website like Google Tag Manager!
+            </div>
+          </div>
+          <div class="add-step-buttons">
+            <button class="btn btn-secondary btn-sm" data-add-step="navigate">+ 🌐 Go to Domain / URL</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="click">+ 👆 Click Element</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="input">+ ⌨️ Type / Input Text</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="condition" style="border-color:rgba(236,72,153,0.45);color:#f9a8d4;">+ 🔀 IF / THEN / ELSE</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="verify">+ ✓ Check / Verify Content</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="extract">+ 📋 Extract / Scrape Data</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="select">+ ▾ Select Dropdown</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="wait">+ ⏱ Wait / Delay</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="scroll">+ ↕ Scroll</button>
+            <button class="btn btn-secondary btn-sm" data-add-step="keypress">+ ⏎ Key Press</button>
+          </div>
+        </div>
+
+        <div class="steps-container" id="steps-container"></div>
+      </section>
+
+      <!-- TAB 2: MASTER CSV MANAGER -->
+      <section class="tab-pane" id="tab-csv">
+        <div class="card-box">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
+            <div>
+              <h3 style="font-size:16px;margin-bottom:4px;">Project Master CSV Data</h3>
+              <p style="font-size:12.5px;color:#94a3b8;">
+                When enabled, FlowTag will loop the entire step sequence once for each row in this Master CSV. Use <code>{{column_name}}</code> in any step's URL, Input Value, or CSS Selector!
+                (Note: You can also attach a separate Step-level CSV to individual steps inside Tab 1.)
+              </p>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <label class="btn btn-primary btn-sm" style="cursor:pointer;">
+                📂 Upload Master .CSV File
+                <input type="file" id="input-master-csv-file" accept=".csv,text/csv" style="display:none;" />
+              </label>
+              <button class="btn btn-secondary btn-sm" id="btn-add-csv-row">+ Add Row</button>
+              <button class="btn btn-secondary btn-sm" id="btn-add-csv-col">+ Add Column</button>
+              <button class="btn btn-danger btn-sm" id="btn-clear-master-csv">Clear CSV</button>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="chk-master-csv-enabled" checked />
+              <span><b>Enable Master CSV Iteration</b> for this project</span>
+            </label>
+            <span id="master-csv-filename" style="font-size:12px;color:#34d399;font-family:monospace;"></span>
+          </div>
+
+          <div id="master-csv-table-container" class="table-wrap"></div>
+
+          <!-- Raw CSV Quick Paste / Editor -->
+          <details style="margin-top:14px;">
+            <summary style="cursor:pointer;font-size:12px;color:#94a3b8;font-weight:600;">
+              ✎ Paste or Edit Raw CSV Text Directly
+            </summary>
+            <div style="margin-top:8px;display:flex;flex-direction:column;gap:8px;">
+              <textarea id="raw-master-csv-textarea" class="textarea mono" rows="6" placeholder="query,category&#10;laptop,electronics&#10;headphones,audio"></textarea>
+              <div>
+                <button class="btn btn-secondary btn-sm" id="btn-apply-raw-csv">Apply Raw CSV Text</button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- TAB 3: LIVE RUN LOGS & EXTRACTED RESULTS -->
+      <section class="tab-pane" id="tab-results">
+        <div class="card-box">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:12px;">
+            <div>
+              <h3 style="font-size:16px;margin-bottom:3px;">Run Execution Options & Runtime CSV</h3>
+              <p style="font-size:12px;color:#94a3b8;">Upload a custom CSV file for this run or configure row range.</p>
+            </div>
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:10px;">
+              <label class="btn btn-secondary btn-sm" style="cursor:pointer;border-color:#6366f1;color:#c7d2fe;">
+                📂 Upload Runtime .CSV for This Run
+                <input type="file" id="tab-runtime-csv-file" accept=".csv,text/csv" style="display:none;" />
+              </label>
+              <span id="tab-runtime-csv-badge" style="font-size:11.5px;color:#34d399;font-family:monospace;"></span>
+              <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <span>Start at Row #</span>
+                <input type="number" id="run-start-row" class="input" value="1" min="1" style="width:70px;padding:5px 8px;" />
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <span>Max Rows (0 = All)</span>
+                <input type="number" id="run-max-rows" class="input" value="0" min="0" style="width:70px;padding:5px 8px;" />
+              </div>
+              <button class="btn btn-success btn-sm" id="btn-run-custom">▶ Start Run</button>
+            </div>
+          </div>
+
+          <div style="margin-top:10px;">
+            <div style="font-size:11.5px;font-weight:700;color:#94a3b8;margin-bottom:6px;">LIVE EXECUTION CONSOLE</div>
+            <div class="log-console" id="run-log-console"></div>
+          </div>
+        </div>
+
+        <div class="card-box">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div>
+              <h3 style="font-size:16px;margin-bottom:3px;">Extracted / Scraped Results & Run Output</h3>
+              <p style="font-size:12px;color:#94a3b8;">Every Master CSV row processed along with all extracted fields from "Extract / Scrape" steps.</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-primary btn-sm" id="btn-export-results-csv">⬇ Download Results (.CSV)</button>
+              <button class="btn btn-secondary btn-sm" id="btn-clear-results">Clear Results</button>
+            </div>
+          </div>
+
+          <div id="results-table-container" class="table-wrap"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Modal for Creating a New Project -->
+  <div id="new-project-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:#111827;border:1px solid #334155;border-radius:14px;width:460px;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 25px 50px rgba(0,0,0,0.6);">
+      <h3 style="font-size:17px;">Create New Automation Project</h3>
+      <div class="field-group">
+        <label class="field-label">Project Name</label>
+        <input type="text" id="modal-proj-name" class="input" placeholder="e.g. Amazon Product Search & Price Scraper" />
+      </div>
+      <div class="field-group">
+        <label class="field-label">Target Website Domain / Start URL</label>
+        <input type="text" id="modal-proj-url" class="input mono" placeholder="https://www.google.com" />
+        <span style="font-size:11px;color:#94a3b8;">We will automatically create Step 1 ("Go to Domain") so you can immediately launch the website and click elements to map steps!</span>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+        <button class="btn btn-secondary" id="modal-btn-cancel">Cancel</button>
+        <button class="btn btn-secondary" id="modal-btn-create-only">Create Project</button>
+        <button class="btn btn-primary" id="modal-btn-create-and-launch">🎯 Create & Launch Domain Builder</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for Running Workflow with Execution-Time CSV Input -->
+  <div id="run-workflow-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.72);z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:#111827;border:1px solid #334155;border-radius:14px;width:540px;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 25px 50px rgba(0,0,0,0.6);">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h3 style="font-size:17px;color:#fff;">▶ Run Workflow — CSV Data Input</h3>
+        <button class="btn btn-secondary btn-sm" id="run-modal-btn-cancel">✕</button>
+      </div>
+
+      <p style="font-size:12.5px;color:#cbd5e1;line-height:1.45;">
+        You can upload a <b>new .CSV file for this execution</b> (using the same column headers as your reference CSV), or run directly with the reference CSV already saved in this project.
+      </p>
+
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;">Mapped CSV Columns Expected</span>
+          <button class="btn btn-secondary btn-sm" id="btn-download-csv-template" style="padding:3px 8px;font-size:11px;">⬇ Download Blank CSV Template</button>
+        </div>
+        <div id="run-modal-expected-cols" class="token-bar"></div>
+      </div>
+
+      <div style="background:#1e293b;border:1px dashed #6366f1;border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px;">
+        <label style="font-size:12.5px;font-weight:700;color:#a5b4fc;">
+          📂 Option 1: Upload Your Own .CSV File for This Run
+        </label>
+        <input type="file" id="run-modal-csv-file" accept=".csv,text/csv" class="input" style="padding:7px;" />
+        <div id="run-modal-csv-status" style="font-size:12px;color:#34d399;font-weight:600;"></div>
+        <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:#cbd5e1;cursor:pointer;">
+          <input type="checkbox" id="run-modal-save-default" />
+          Also save this file as the project's default reference CSV
+        </label>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="field-group">
+          <label class="field-label">Start at Row #</label>
+          <input type="number" id="run-modal-start-row" class="input" value="1" min="1" />
+        </div>
+        <div class="field-group">
+          <label class="field-label">Max Rows to Run (0 = All)</label>
+          <input type="number" id="run-modal-max-rows" class="input" value="0" min="0" />
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:8px;">
+        <span id="run-modal-ref-summary" style="font-size:11.5px;color:#94a3b8;"></span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-secondary" id="run-modal-btn-use-ref">Run with Reference CSV</button>
+          <button class="btn btn-success" id="run-modal-btn-start">🚀 Start Execution</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for Per-Project AI Export & Import -->
+  <div id="ai-project-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+    <div style="background:#111827;border:1px solid #334155;border-radius:14px;width:680px;max-width:94vw;max-height:90vh;overflow-y:auto;padding:22px;display:flex;flex-direction:column;gap:14px;box-shadow:0 25px 50px rgba(0,0,0,0.65);">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <h3 style="font-size:17px;color:#fff;">🤖 Per-Project AI Export & Import</h3>
+          <div style="font-size:11.5px;color:#94a3b8;margin-top:2px;">
+            Export this project with embedded Domuto schema instructions so any AI (ChatGPT, Claude, Gemini) can read, edit, or build steps and import it right back.
+          </div>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="ai-modal-btn-close">✕</button>
+      </div>
+
+      <!-- Export Box -->
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px;display:flex;flex-direction:column;gap:9px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div>
+            <div style="font-size:12.5px;font-weight:700;color:#93c5fd;">1. Export Current Project for AI</div>
+            <div style="font-size:11px;color:#94a3b8;">Includes self-documenting AI schema guide + all workflow steps & CSV columns.</div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-secondary btn-sm" id="btn-ai-copy-json">📋 Copy AI Prompt + JSON</button>
+            <button class="btn btn-primary btn-sm" id="btn-ai-download-json">⬇ Download Project (.domuto.json)</button>
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:#cbd5e1;cursor:pointer;">
+          <input type="checkbox" id="chk-ai-include-all-csv" />
+          Include all CSV rows in export (uncheck to include only headers + first 5 sample rows so large CSVs stay compact for AI; existing CSV rows are preserved on import!)
+        </label>
+      </div>
+
+      <!-- Live JSON Editor / Paste & Upload Box -->
+      <div style="background:#0f172a;border:1px solid #334155;border-radius:10px;padding:13px;display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div>
+            <div style="font-size:12.5px;font-weight:700;color:#34d399;">2. Edit Manually or Import from AI</div>
+            <div style="font-size:11px;color:#94a3b8;">Upload the edited <code>.json</code> file from AI, or paste/edit the JSON directly below:</div>
+          </div>
+          <label class="btn btn-secondary btn-sm" style="cursor:pointer;">
+            📂 Upload AI JSON File
+            <input type="file" id="input-ai-import-file" accept=".json,application/json,text/plain" style="display:none;" />
+          </label>
+        </div>
+
+        <textarea
+          id="textarea-ai-project-json"
+          class="input mono"
+          rows="13"
+          style="font-size:11.5px;line-height:1.45;resize:vertical;"
+          placeholder="Paste AI-edited project JSON here..."
+        ></textarea>
+        <div id="ai-modal-status" style="font-size:12px;font-weight:600;min-height:16px;"></div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <button class="btn btn-secondary" id="btn-ai-import-as-new" title="Creates a brand new project from this JSON without touching your current project">
+          + Import as New Project
+        </button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-secondary" id="ai-modal-btn-cancel">Cancel</button>
+          <button class="btn btn-success" id="btn-ai-apply-current">✨ Apply Changes to Current Project</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="csv_utils.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

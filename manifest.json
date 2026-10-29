@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Domuto | Visual Browser Automation",
+  "version": "1.0.0",
+  "description": "Automate repetitive browser tasks with visual workflow builder. Runs locally with privacy at its core. Made with ❤️ by Subrata Dey",
+  "author": "Subrata Dey",
+  "icons": {
+    "16": "ico.png",
+    "32": "ico.png",
+    "48": "ico.png",
+    "128": "ico.png"
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "activeTab",
+    "scripting",
+    "downloads"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Domuto | Visual Browser Automation",
+    "default_icon": {
+      "16": "ico.png",
+      "32": "ico.png",
+      "48": "ico.png",
+      "128": "ico.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["csv_utils.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard.html", "csv_utils.js", "ico.png", "dash_logo.png"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

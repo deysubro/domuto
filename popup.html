@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Domuto | Visual Browser Automation</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    body {
+      width: 340px;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 14px;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #1e293b;
+      margin-bottom: 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .logo-badge {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      object-fit: cover;
+      display: block;
+    }
+    .btn {
+      width: 100%;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .btn-primary {
+      background: #6366f1;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-secondary {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+    }
+    .btn-secondary:hover { background: #334155; }
+    .btn-success {
+      background: #10b981;
+      color: #052e16;
+    }
+    .btn-success:hover { filter: brightness(1.08); }
+    .section {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 11px;
+      margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    label {
+      font-size: 11px;
+      color: #94a3b8;
+      font-weight: 600;
+    }
+    select, input {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #f8fafc;
+      border-radius: 6px;
+      padding: 7px 9px;
+      font-size: 12px;
+    }
+    .row {
+      display: flex;
+      gap: 6px;
+    }
+    .meta {
+      font-size: 11px;
+      color: #94a3b8;
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <img src="ico.png" alt="Domuto" class="logo-badge" />
+      <div>
+        <div style="line-height:1.1;">Domuto</div>
+        <div style="font-size:9.5px;color:#94a3b8;font-weight:500;">Visual Browser Automation</div>
+      </div>
+    </div>
+    <button class="btn btn-secondary" id="btn-open-dashboard" style="width:auto;padding:5px 10px;font-size:11.5px;">
+      Open Studio ↗
+    </button>
+  </div>
+
+  <div class="section">
+    <label>Active Project</label>
+    <select id="project-select"></select>
+    <div class="meta" id="project-meta"></div>
+
+    <div style="background:#0f172a;border:1px dashed #334155;border-radius:7px;padding:7px 9px;margin-top:2px;">
+      <label style="display:block;font-size:10.5px;color:#93c5fd;margin-bottom:4px;">
+        📂 Upload Your Own CSV for This Run (Optional)
+      </label>
+      <input type="file" id="popup-runtime-csv" accept=".csv,text/csv" style="padding:3px;font-size:11px;border:none;background:transparent;" />
+      <div id="popup-runtime-csv-info" style="font-size:10.5px;color:#34d399;margin-top:2px;"></div>
+    </div>
+
+    <div class="row" style="margin-top:4px;">
+      <button class="btn btn-primary" id="btn-launch-domain" style="flex:1;">
+        🎯 Open Domain & Map
+      </button>
+      <button class="btn btn-success" id="btn-run-project" style="flex:0.85;">
+        ▶ Run
+      </button>
+    </div>
+    <button class="btn btn-secondary" id="btn-attach-current-tab">
+      📌 Attach Tag Builder to Current Tab
+    </button>
+  </div>
+
+  <button class="btn btn-secondary" id="btn-new-project">
+    + Create New Project in Dashboard
+  </button>
+
+  <script src="csv_utils.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

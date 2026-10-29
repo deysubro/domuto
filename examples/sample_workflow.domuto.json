@@ -1,0 +1,81 @@
+{
+  "_domuto_ai_guide": {
+    "purpose": "Example Domuto AI-ready workflow project file (.domuto.json). Upload this file to ChatGPT, Claude, or Gemini to customize steps, then import it via '🤖 AI Export / Import' in Domuto Studio."
+  },
+  "project": {
+    "name": "Sample Order Processing & Status Scraper",
+    "description": "Demonstrates CSV row scoping, conditional IF/THEN/ELSE branching, and data extraction.",
+    "startUrl": "https://example.com/orders",
+    "masterCsv": {
+      "enabled": true,
+      "fileName": "sample_orders.csv",
+      "headers": ["Order_ID", "Item_Qty", "Tracking_Number"],
+      "rows": [
+        { "Order_ID": "ORD-1001", "Item_Qty": "1", "Tracking_Number": "1Z999AA10123456784" },
+        { "Order_ID": "ORD-1002", "Item_Qty": "2", "Tracking_Number": "1Z999AA10123456799" }
+      ]
+    },
+    "steps": [
+      {
+        "id": "step_1",
+        "name": "Go to Orders Page",
+        "type": "navigate",
+        "paused": false,
+        "selector": "",
+        "value": "https://example.com/orders",
+        "options": { "waitAfterMs": 1000 }
+      },
+      {
+        "id": "step_2",
+        "name": "Enter Item Quantity in Order Row",
+        "type": "input",
+        "paused": false,
+        "selector": "input[name^=\"order(\"][name$=\").qty\"]",
+        "value": "{{Item_Qty}}",
+        "options": {
+          "clearFirst": true,
+          "rowAnchorText": "{{Order_ID}}",
+          "waitAfterMs": 500
+        }
+      },
+      {
+        "id": "step_3",
+        "name": "Check if Quantity equals 1",
+        "type": "condition",
+        "paused": false,
+        "selector": "",
+        "value": "1",
+        "options": {
+          "ifSource": "csv_or_var",
+          "ifLeftValue": "{{Item_Qty}}",
+          "verifyCondition": "equals",
+          "thenBranch": {
+            "mode": "select",
+            "selector": "#shipping-action",
+            "value": "ship_single_box"
+          },
+          "elseBranch": {
+            "mode": "select",
+            "selector": "#shipping-action",
+            "value": "split_packages"
+          },
+          "waitAfterMs": 500
+        }
+      },
+      {
+        "id": "step_4",
+        "name": "Extract Confirmation Status",
+        "type": "extract",
+        "paused": false,
+        "selector": ".order-status-badge",
+        "value": "",
+        "options": {
+          "extractTarget": "text",
+          "outputColumn": "Order_Status",
+          "rowAnchorText": "{{Order_ID}}",
+          "waitAfterMs": 500
+        }
+      }
+    ]
+  }
+}
