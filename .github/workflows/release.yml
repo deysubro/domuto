@@ -1,0 +1,41 @@
+name: Publish Chrome Extension Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Package Chrome Web Store ZIP
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          ZIP_NAME="domuto-${VERSION}-chrome-webstore.zip"
+          zip -r "${ZIP_NAME}" \
+            manifest.json \
+            background.js \
+            content.js \
+            csv_utils.js \
+            dashboard.html \
+            dashboard.css \
+            dashboard.js \
+            popup.html \
+            popup.js \
+            ico.png \
+            dash_logo.png \
+            icons/ \
+            LICENSE
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: domuto-${{ github.ref_name }}-chrome-webstore.zip
+          generate_release_notes: true

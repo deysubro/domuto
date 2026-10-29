@@ -8,7 +8,9 @@ desktop.ini
 .vscode/
 .idea/
 
-# Node / temporary artifacts (if any local scripts are used)
+# Build / Release packages
+dist/
+*.zip
 node_modules/
 npm-debug.log*
 *.tmp
