@@ -15,10 +15,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Package Chrome Web Store ZIP
+      - name: Package Chrome Extension ZIP
         run: |
           VERSION="${GITHUB_REF_NAME}"
-          ZIP_NAME="domuto-${VERSION}-chrome-webstore.zip"
+          ZIP_NAME="domuto-${VERSION}.zip"
           zip -r "${ZIP_NAME}" \
             manifest.json \
             background.js \
@@ -37,5 +37,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: domuto-${{ github.ref_name }}-chrome-webstore.zip
+          files: domuto-${{ github.ref_name }}.zip
           generate_release_notes: true
