@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Domuto | Visual Browser Automation",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Automate repetitive browser tasks with visual workflow builder. Runs locally with privacy at its core. Made with ❤️ by Subrata Dey",
   "author": "Subrata Dey",
   "icons": {

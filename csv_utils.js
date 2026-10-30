@@ -118,9 +118,302 @@
   }
 
   /**
-   * Resolves template variables inside a string like:
-   *   "https://example.com/search?q={{query}}&page={{step.page}}&ref={{prev.step_2}}"
+   * Helper to parse date strings and preserve their original format.
    * Supports:
+   *  - MM-DD-YYYY or M-D-YYYY
+   *  - MM/DD/YYYY or M/D/YYYY
+   *  - YYYY-MM-DD
+   *  - YYYY/MM/DD
+   *  - DD-MM-YYYY or DD/MM/YYYY (when day > 12)
+   *  - DD-MMM-YYYY or DD MMM YYYY (e.g. 18-Sep-2026)
+   */
+  function parseDateWithFormat(str) {
+    if (!str || typeof str !== 'string') return null;
+    const s = str.trim();
+    if (!s) return null;
+
+    // 1. MM-DD-YYYY or DD-MM-YYYY (sep: -)
+    let m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+    if (m) {
+      const p1 = parseInt(m[1], 10);
+      const p2 = parseInt(m[2], 10);
+      const year = parseInt(m[3], 10);
+      let month = p1;
+      let day = p2;
+      let format = 'MM-DD-YYYY';
+      if (p1 > 12 && p2 <= 12) {
+        day = p1;
+        month = p2;
+        format = 'DD-MM-YYYY';
+      }
+      const date = new Date(year, month - 1, day);
+      if (!isNaN(date.getTime())) {
+        return { date, format, padMonth: m[1].length === 2, padDay: m[2].length === 2, sep: '-' };
+      }
+    }
+
+    // 2. MM/DD/YYYY or DD/MM/YYYY (sep: /)
+    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      const p1 = parseInt(m[1], 10);
+      const p2 = parseInt(m[2], 10);
+      const year = parseInt(m[3], 10);
+      let month = p1;
+      let day = p2;
+      let format = 'MM/DD/YYYY';
+      if (p1 > 12 && p2 <= 12) {
+        day = p1;
+        month = p2;
+        format = 'DD/MM/YYYY';
+      }
+      const date = new Date(year, month - 1, day);
+      if (!isNaN(date.getTime())) {
+        return { date, format, padMonth: m[1].length === 2, padDay: m[2].length === 2, sep: '/' };
+      }
+    }
+
+    // 3. YYYY-MM-DD
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) {
+      const year = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10);
+      const day = parseInt(m[3], 10);
+      const date = new Date(year, month - 1, day);
+      if (!isNaN(date.getTime())) {
+        return { date, format: 'YYYY-MM-DD', padMonth: m[2].length === 2, padDay: m[3].length === 2, sep: '-' };
+      }
+    }
+
+    // 4. YYYY/MM/DD
+    m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+    if (m) {
+      const year = parseInt(m[1], 10);
+      const month = parseInt(m[2], 10);
+      const day = parseInt(m[3], 10);
+      const date = new Date(year, month - 1, day);
+      if (!isNaN(date.getTime())) {
+        return { date, format: 'YYYY/MM/DD', padMonth: m[2].length === 2, padDay: m[3].length === 2, sep: '/' };
+      }
+    }
+
+    // 5. DD-MMM-YYYY or DD MMM YYYY (e.g. 18-Sep-2026 or 18 Sep 2026)
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    m = s.match(/^(\d{1,2})[- ]([A-Za-z]{3})[- ](\d{4})$/);
+    if (m) {
+      const day = parseInt(m[1], 10);
+      const monStr = m[2].toLowerCase();
+      const monIdx = MONTHS.findIndex((mo) => mo.toLowerCase() === monStr);
+      const year = parseInt(m[3], 10);
+      if (monIdx >= 0) {
+        const date = new Date(year, monIdx, day);
+        if (!isNaN(date.getTime())) {
+          return { date, format: 'DD-MMM-YYYY', padDay: m[1].length === 2, sep: s.includes('-') ? '-' : ' ' };
+        }
+      }
+    }
+
+    // Fallback if ISO timestamp
+    if (s.length >= 10 && (s.includes('-') || s.includes('/'))) {
+      const parsed = Date.parse(s);
+      if (!isNaN(parsed)) {
+        const date = new Date(parsed);
+        return { date, format: 'MM-DD-YYYY', padMonth: true, padDay: true, sep: '-' };
+      }
+    }
+
+    return null;
+  }
+
+  function formatDateLike(date, formatInfo) {
+    if (!formatInfo) {
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${m}-${d}-${date.getFullYear()}`;
+    }
+    const y = date.getFullYear();
+    const mNum = date.getMonth() + 1;
+    const dNum = date.getDate();
+    const mStr = formatInfo.padMonth ? String(mNum).padStart(2, '0') : String(mNum);
+    const dStr = formatInfo.padDay ? String(dNum).padStart(2, '0') : String(dNum);
+    const sep = formatInfo.sep || '-';
+
+    if (formatInfo.format === 'YYYY-MM-DD' || formatInfo.format === 'YYYY/MM/DD') {
+      return `${y}${sep}${mStr}${sep}${dStr}`;
+    }
+    if (formatInfo.format === 'DD-MM-YYYY' || formatInfo.format === 'DD/MM/YYYY') {
+      return `${dStr}${sep}${mStr}${sep}${y}`;
+    }
+    if (formatInfo.format === 'DD-MMM-YYYY') {
+      const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return `${dStr}${sep}${MONTHS[date.getMonth()]}${sep}${y}`;
+    }
+    return `${mStr}${sep}${dStr}${sep}${y}`;
+  }
+
+  function addCalendarDays(startDate, n) {
+    const d = new Date(startDate.getTime());
+    d.setDate(d.getDate() + n);
+    return d;
+  }
+
+  function addBusinessDays(startDate, n) {
+    const d = new Date(startDate.getTime());
+    if (n === 0) {
+      while (d.getDay() === 0 || d.getDay() === 6) {
+        d.setDate(d.getDate() + 1);
+      }
+      return d;
+    }
+    const sign = n >= 0 ? 1 : -1;
+    let remaining = Math.abs(n);
+    while (remaining > 0) {
+      d.setDate(d.getDate() + sign);
+      const day = d.getDay(); // 0 = Sun, 6 = Sat
+      if (day !== 0 && day !== 6) {
+        remaining--;
+      }
+    }
+    return d;
+  }
+
+  function resolveSingleToken(token, context = {}) {
+    const key = String(token || '').replace(/^\{\{\s*|\s*\}\}$/g, '').trim();
+    const {
+      masterRow = {},
+      stepRow = {},
+      masterRowIndex = 0,
+      stepRowIndex = 0,
+      extractedVars = {}
+    } = context;
+
+    if (key === 'row_index') return String(masterRowIndex + 1);
+    if (key === 'step_row_index') return String(stepRowIndex + 1);
+
+    if (key.startsWith('prev.')) {
+      const prevKey = key.slice(5);
+      if (extractedVars && extractedVars[prevKey] !== undefined) {
+        return String(extractedVars[prevKey]);
+      }
+      return '';
+    }
+    if (key.startsWith('step.')) {
+      const col = key.slice(5);
+      if (stepRow && stepRow[col] !== undefined) return String(stepRow[col]);
+      if (masterRow && masterRow[col] !== undefined) return String(masterRow[col]);
+      return '';
+    }
+    if (key.startsWith('master.')) {
+      const col = key.slice(7);
+      if (masterRow && masterRow[col] !== undefined) return String(masterRow[col]);
+      if (stepRow && stepRow[col] !== undefined) return String(stepRow[col]);
+      return '';
+    }
+    if (key.startsWith('var.')) {
+      const varName = key.slice(4);
+      return extractedVars && extractedVars[varName] !== undefined ? String(extractedVars[varName]) : '';
+    }
+
+    if (stepRow && stepRow[key] !== undefined) return String(stepRow[key]);
+    if (masterRow && masterRow[key] !== undefined) return String(masterRow[key]);
+    if (extractedVars && extractedVars[key] !== undefined) return String(extractedVars[key]);
+
+    return token;
+  }
+
+  /**
+   * Evaluates a math or date calculation expression such as:
+   *   "{{PO_Submitted_Date}} + next business day"
+   *   "{{PO_Submitted_Date}} + 1"
+   *   "{{PO_Submitted_Date}} + 3 business days"
+   *   "{{PO_Submitted_Date}} - 1 day"
+   *   "{{Price}} * 1.1"
+   *   "{{Quantity}} + 5"
+   * Returns calculated string, or null if not a calculation.
+   */
+  function evaluateMathOrDateExpression(rawExpr, context = {}) {
+    if (!rawExpr || typeof rawExpr !== 'string') return null;
+    const trimmed = rawExpr.trim();
+
+    // Match [left operand] [operator + - * /] [right operand]
+    const match = trimmed.match(/^(\{\{[^}]+\}\}|[a-zA-Z0-9_.\$]+)\s*([\+\-\*\/])\s*(.+)$/);
+    if (!match) return null;
+
+    let leftRaw = match[1].trim();
+    const op = match[2];
+    let rightRaw = match[3].trim();
+
+    // Resolve left value if token or column name
+    let leftVal = leftRaw.startsWith('{{')
+      ? resolveSingleToken(leftRaw, context)
+      : resolveSingleToken(`{{${leftRaw}}}`, context);
+    if (leftVal === `{{${leftRaw}}}`) {
+      leftVal = leftRaw;
+    }
+
+    // Resolve right value if it contains a token
+    if (rightRaw.startsWith('{{') && rightRaw.endsWith('}}')) {
+      rightRaw = resolveSingleToken(rightRaw, context);
+    }
+
+    // Check if left operand is a date
+    const dateInfo = parseDateWithFormat(leftVal);
+    if (dateInfo) {
+      const rightLower = rightRaw.toLowerCase().trim();
+      const isBiz = /business|workday|biz/.test(rightLower);
+
+      let num = 1;
+      if (rightLower.includes('next')) {
+        num = 1;
+      } else if (rightLower.includes('prev')) {
+        num = -1;
+      } else {
+        const numMatch = rightLower.match(/[-+]?\d+/);
+        if (numMatch) {
+          num = parseInt(numMatch[0], 10);
+        }
+      }
+
+      if (op === '-') num = -num;
+
+      const resDate = isBiz
+        ? addBusinessDays(dateInfo.date, num)
+        : addCalendarDays(dateInfo.date, num);
+
+      return formatDateLike(resDate, dateInfo);
+    }
+
+    // Check if numeric calculation
+    const leftClean = String(leftVal).replace(/,/g, '').trim();
+    const rightClean = String(rightRaw).replace(/,/g, '').trim();
+    const hasDollar = leftClean.startsWith('$');
+    const numLeft = parseFloat(hasDollar ? leftClean.slice(1) : leftClean);
+    const numRight = parseFloat(rightClean.startsWith('$') ? rightClean.slice(1) : rightClean);
+
+    if (!isNaN(numLeft) && !isNaN(numRight)) {
+      let res = 0;
+      if (op === '+') res = numLeft + numRight;
+      else if (op === '-') res = numLeft - numRight;
+      else if (op === '*') res = numLeft * numRight;
+      else if (op === '/') res = numRight !== 0 ? numLeft / numRight : 0;
+
+      const hasDecimals = leftClean.includes('.') || rightClean.includes('.');
+      const formattedNum = hasDecimals
+        ? (Math.round(res * 100) / 100).toFixed(2)
+        : String(Math.round(res * 10000) / 10000);
+      return hasDollar ? `$${formattedNum}` : formattedNum;
+    }
+
+    return null;
+  }
+
+  /**
+   * Resolves template variables and formulas inside a string like:
+   *   "https://example.com/search?q={{query}}&page={{step.page}}&ref={{prev.step_2}}"
+   *   "({{PO_Submitted_Date}} + next business day)"
+   *   "({{PO_Submitted_Date}}+1)"
+   *   "Total: ({{Price}} * 1.15)"
+   * Supports:
+   *   - Parenthesized math & date expressions: ({{Col}} + 1), ({{Col}} + next business day)
    *   - {{columnName}} -> looks up in stepRow first, then masterRow, then extractedVars
    *   - {{master.columnName}} -> looks up in masterRow
    *   - {{step.columnName}} -> looks up in stepRow
@@ -131,56 +424,25 @@
    */
   function interpolateValue(template, context = {}) {
     if (template === undefined || template === null) return '';
-    const str = String(template);
-    const {
-      masterRow = {},
-      stepRow = {},
-      masterRowIndex = 0,
-      stepRowIndex = 0,
-      extractedVars = {}
-    } = context;
+    let str = String(template);
 
-    return str.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (match, expr) => {
-      const key = expr.trim();
-      if (key === 'row_index') return String(masterRowIndex + 1);
-      if (key === 'step_row_index') return String(stepRowIndex + 1);
-
-      if (key.startsWith('prev.')) {
-        const prevKey = key.slice(5); // e.g. 'step_1' or 'step_2'
-        if (extractedVars && extractedVars[prevKey] !== undefined) {
-          return String(extractedVars[prevKey]);
-        }
-        return '';
-      }
-      if (key.startsWith('step.')) {
-        const col = key.slice(5);
-        if (stepRow && stepRow[col] !== undefined) return String(stepRow[col]);
-        if (masterRow && masterRow[col] !== undefined) return String(masterRow[col]);
-        return '';
-      }
-      if (key.startsWith('master.')) {
-        const col = key.slice(7);
-        if (masterRow && masterRow[col] !== undefined) return String(masterRow[col]);
-        if (stepRow && stepRow[col] !== undefined) return String(stepRow[col]);
-        return '';
-      }
-      if (key.startsWith('var.')) {
-        const varName = key.slice(4);
-        return extractedVars && extractedVars[varName] !== undefined ? String(extractedVars[varName]) : '';
-      }
-
-      // Check stepRow first if present, then masterRow, then extractedVars
-      if (stepRow && stepRow[key] !== undefined) {
-        return String(stepRow[key]);
-      }
-      if (masterRow && masterRow[key] !== undefined) {
-        return String(masterRow[key]);
-      }
-      if (extractedVars && extractedVars[key] !== undefined) {
-        return String(extractedVars[key]);
-      }
-      return match; // leave unchanged if not found
+    // 1. Evaluate parenthesized math & date formulas: e.g. ({{PO_Submitted_Date}} + next business day) or ({{PO_Submitted_Date}}+1)
+    str = str.replace(/\(([^()]+?)\)/g, (fullMatch, inner) => {
+      const evalRes = evaluateMathOrDateExpression(inner, context);
+      return evalRes !== null ? evalRes : fullMatch;
     });
+
+    // 2. Evaluate expressions or tokens inside {{ ... }}
+    str = str.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (match, expr) => {
+      const key = expr.trim();
+      if (/[\+\-\*\/]/.test(key) && !key.startsWith('prev.') && !key.startsWith('var.')) {
+        const evalRes = evaluateMathOrDateExpression(key, context);
+        if (evalRes !== null) return evalRes;
+      }
+      return resolveSingleToken(key, context);
+    });
+
+    return str;
   }
 
   /**
@@ -357,6 +619,11 @@
     objectsToCSV,
     escapeCSVCell,
     interpolateValue,
-    evaluateVerification
+    evaluateVerification,
+    evaluateMathOrDateExpression,
+    parseDateWithFormat,
+    formatDateLike,
+    addCalendarDays,
+    addBusinessDays
   };
 })(typeof self !== 'undefined' ? self : window);

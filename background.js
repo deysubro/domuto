@@ -495,41 +495,43 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
     Array.isArray(project.masterCsv.rows) &&
     project.masterCsv.rows.length > 0;
 
-  const masterCsvRows = hasRuntimeCsv
+  let masterCsvRows = hasRuntimeCsv
     ? runtimeCsv.rows
     : hasMasterCsv
     ? project.masterCsv.rows
     : [];
 
-  // Find max row count among any Step CSVs that pick 1 row per full sequence run
-  let maxSequenceRows = masterCsvRows.length;
-  if (!hasRuntimeCsv) {
-    for (const st of project.steps) {
-      if (
-        st.stepCsv &&
-        Array.isArray(st.stepCsv.rows) &&
-        st.stepCsv.rows.length > 0 &&
-        st.stepCsv.mode !== 'loop_single_step'
-      ) {
-        if (st.stepCsv.rows.length > maxSequenceRows) {
-          maxSequenceRows = st.stepCsv.rows.length;
+  const startIdx = Math.max(0, (parseInt(startRow, 10) || 1) - 1);
+
+  function computeSequenceIndices() {
+    let maxSequenceRows = masterCsvRows.length;
+    if (!hasRuntimeCsv) {
+      for (const st of project.steps) {
+        if (
+          st.stepCsv &&
+          Array.isArray(st.stepCsv.rows) &&
+          st.stepCsv.rows.length > 0 &&
+          st.stepCsv.mode !== 'loop_single_step'
+        ) {
+          if (st.stepCsv.rows.length > maxSequenceRows) {
+            maxSequenceRows = st.stepCsv.rows.length;
+          }
         }
       }
     }
+    const totalAvailableRows = Math.max(maxSequenceRows, 1);
+    let indices = [];
+    for (let i = 0; i < totalAvailableRows; i++) {
+      indices.push(i);
+    }
+    indices = indices.slice(startIdx);
+    if (maxRows && maxRows > 0) {
+      indices = indices.slice(0, maxRows);
+    }
+    return indices;
   }
 
-  // Build combined sequence rows (if no CSVs drive the sequence, run 1 iteration with {})
-  const totalAvailableRows = Math.max(maxSequenceRows, 1);
-  let sequenceIndices = [];
-  for (let i = 0; i < totalAvailableRows; i++) {
-    sequenceIndices.push(i);
-  }
-
-  const startIdx = Math.max(0, (parseInt(startRow, 10) || 1) - 1);
-  sequenceIndices = sequenceIndices.slice(startIdx);
-  if (maxRows && maxRows > 0) {
-    sequenceIndices = sequenceIndices.slice(0, maxRows);
-  }
+  let sequenceIndices = computeSequenceIndices();
 
   // Helper to build the merged row data for sequence iteration `rowIndex`
   function getMergedSequenceRow(rowIndex) {
@@ -615,12 +617,69 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
 
   await ensureContentScriptInjected(targetTab.id);
 
+  const stepTableSourceStep = (project.steps || []).find(
+    (st) => st.stepCsv && st.stepCsv.enabled && st.stepCsv.sourceType === 'page_table' && st.stepCsv.containerSelector
+  );
+  const effectivePageTableSource =
+    project.pageTableSource && project.pageTableSource.enabled && project.pageTableSource.containerSelector
+      ? project.pageTableSource
+      : stepTableSourceStep
+      ? {
+          enabled: true,
+          sourceType: 'table',
+          containerSelector: stepTableSourceStep.stepCsv.containerSelector,
+          rowSelector: stepTableSourceStep.stepCsv.rowSelector || 'tbody tr',
+          liveRefreshOnRun: true
+        }
+      : null;
+
+  const hasPageTableSource = Boolean(effectivePageTableSource && !hasRuntimeCsv);
+
+  async function refreshLivePageTableRowsIfNeeded() {
+    if (!hasPageTableSource || effectivePageTableSource.liveRefreshOnRun === false) return false;
+    try {
+      await ensureContentScriptInjected(targetTab.id);
+      const liveRes = await sendMessageToTabSafe(targetTab.id, {
+        type: 'EXTRACT_PAGE_TABLE_ROWS',
+        pageTableSource: effectivePageTableSource
+      });
+      if (liveRes && liveRes.ok && Array.isArray(liveRes.rows) && liveRes.rows.length > 0) {
+        masterCsvRows = liveRes.rows;
+        for (const st of project.steps || []) {
+          if (st.stepCsv && st.stepCsv.sourceType === 'page_table') {
+            st.stepCsv.rows = liveRes.rows;
+            if (Array.isArray(liveRes.headers) && liveRes.headers.length > 0) {
+              st.stepCsv.headers = liveRes.headers;
+            }
+          }
+        }
+        sequenceIndices = computeSequenceIndices();
+        await updateRunnerState({ totalMasterRows: sequenceIndices.length });
+        await appendRunLog(
+          'info',
+          `🌐 Live Page Table/List (${effectivePageTableSource.containerSelector}): Detected ${liveRes.rows.length} row(s) on page.`
+        );
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  await refreshLivePageTableRowsIfNeeded();
+
   try {
     for (let mIdx = 0; mIdx < sequenceIndices.length; mIdx++) {
       await waitWhilePausedOrStopped();
       const rowIndex = sequenceIndices[mIdx];
       const actualRowNumber = rowIndex + 1;
-      const masterRow = getMergedSequenceRow(rowIndex);
+      let masterRow = getMergedSequenceRow(rowIndex);
+      const activePageTableConfig = effectivePageTableSource
+        ? {
+            containerSelector: effectivePageTableSource.containerSelector,
+            rowSelector: effectivePageTableSource.rowSelector || '',
+            rowIndex
+          }
+        : null;
 
       // Build result record seeded with current row columns
       const rowResult = {
@@ -639,7 +698,7 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
         currentStepIndex: 0,
         currentStepName: `Starting Sequence Run #${actualRowNumber} (Row ${mIdx + 1} of ${sequenceIndices.length})`
       });
-      await appendRunLog('info', `--- Running Full Sequence for CSV Row #${actualRowNumber} (${mIdx + 1}/${sequenceIndices.length}) ---`);
+      await appendRunLog('info', `--- Running Full Sequence for Row #${actualRowNumber} (${mIdx + 1}/${sequenceIndices.length}) ---`);
 
       let skipRemainingStepsForRow = false;
 
@@ -702,34 +761,30 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
           });
 
           // Resolve dynamic value ({{col}}, {{prev.step_1}}, {{var.Name}}, or explicit Step CSV column)
+          // Note: For 'condition' and 'verify' steps, `step.value` is the expected comparison string (e.g. "Enter PO ESD"),
+          // NOT an input value to be replaced by `stepRow[columnName]`!
           let rawVal = step.value || '';
-          if (hasStepCsv && step.stepCsv.columnName && !rawVal.includes('{{')) {
+          if (
+            step.type !== 'condition' &&
+            step.type !== 'verify' &&
+            hasStepCsv &&
+            step.stepCsv.columnName &&
+            !rawVal.includes('{{')
+          ) {
             rawVal = stepRow[step.stepCsv.columnName] ?? rawVal;
           }
 
-          const resolvedValue = FlowTagCSV.interpolateValue(rawVal, {
+          const interpCtx = {
             masterRow,
             stepRow,
             masterRowIndex: actualRowNumber - 1,
             stepRowIndex,
             extractedVars
-          });
+          };
 
-          const resolvedSelector = FlowTagCSV.interpolateValue(step.selector || '', {
-            masterRow,
-            stepRow,
-            masterRowIndex: actualRowNumber - 1,
-            stepRowIndex,
-            extractedVars
-          });
-
-          const resolvedRowAnchor = FlowTagCSV.interpolateValue(step.options?.rowAnchorText || '', {
-            masterRow,
-            stepRow,
-            masterRowIndex: actualRowNumber - 1,
-            stepRowIndex,
-            extractedVars
-          });
+          const resolvedValue = FlowTagCSV.interpolateValue(rawVal, interpCtx);
+          const resolvedSelector = FlowTagCSV.interpolateValue(step.selector || '', interpCtx);
+          const resolvedRowAnchor = FlowTagCSV.interpolateValue(step.options?.rowAnchorText || '', interpCtx);
 
           await appendRunLog(
             'step',
@@ -741,6 +796,19 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
 
           // Execute step by type
           if (step.type === 'navigate') {
+            // When looping an embedded HTML table on the same page, skip redundant static page reloads on Row #2+
+            if (
+              mIdx > 0 &&
+              sIdx === 0 &&
+              hasPageTableSource &&
+              !String(step.value || '').includes('{{')
+            ) {
+              await appendRunLog(
+                'info',
+                `🌐 [Row ${actualRowNumber}] Staying on current page to process HTML Table Row #${actualRowNumber}.`
+              );
+              continue;
+            }
             let navUrl = resolvedValue || project.startUrl;
             if (!/^https?:\/\//i.test(navUrl)) {
               navUrl = 'https://' + navUrl;
@@ -751,26 +819,29 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
             await waitNav;
             await sleep(500);
             await ensureContentScriptInjected(targetTab.id);
+            if (mIdx === 0 && sIdx === 0 && hasPageTableSource) {
+              const refreshed = await refreshLivePageTableRowsIfNeeded();
+              if (refreshed) {
+                masterRow = getMergedSequenceRow(rowIndex);
+                Object.assign(rowResult, masterRow);
+              }
+            }
           } else if (step.type === 'wait' && (!step.options || step.options.waitMode !== 'element')) {
             const waitSec = parseFloat(resolvedValue) || 2;
             await sleep(Math.min(waitSec * 1000, 60000));
           } else if (step.type === 'condition') {
             const opts = step.options || {};
-            const ifSource = opts.ifSource || (step.selector ? 'dom_element' : 'csv_or_var');
+            const ifSource = opts.ifSource || (step.selector && !opts.ifLeftValue && !step.stepCsv?.columnName ? 'dom_element' : 'csv_or_var');
             const conditionOp = opts.verifyCondition || 'equals';
             let condPassed = false;
             let condReason = '';
             let condActual = '';
 
             if (ifSource === 'csv_or_var') {
-              const rawLeft = opts.ifLeftValue || '';
-              const resolvedLeft = FlowTagCSV.interpolateValue(rawLeft, {
-                masterRow,
-                stepRow,
-                masterRowIndex: actualRowNumber - 1,
-                stepRowIndex,
-                extractedVars
-              });
+              const rawLeft =
+                opts.ifLeftValue ||
+                (step.stepCsv?.columnName ? `{{${step.stepCsv.columnName}}}` : '');
+              const resolvedLeft = FlowTagCSV.interpolateValue(rawLeft, interpCtx);
               const evalRes = FlowTagCSV.evaluateVerification(
                 resolvedLeft,
                 conditionOp,
@@ -778,7 +849,7 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
                 Boolean(opts.caseSensitive)
               );
               condPassed = evalRes.passed;
-              condReason = `CSV/Var "${rawLeft}" = "${resolvedLeft}" → ${evalRes.reason}`;
+              condReason = `Column/Var "${rawLeft}" = "${resolvedLeft}" → ${evalRes.reason}`;
               condActual = evalRes.actualValue;
             } else {
               await ensureContentScriptInjected(targetTab.id);
@@ -789,7 +860,8 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
                   type: 'condition_check',
                   resolvedSelector,
                   resolvedValue,
-                  resolvedRowAnchor
+                  resolvedRowAnchor,
+                  pageTableConfig: activePageTableConfig
                 }
               });
               if (checkRes && checkRes.ok) {
@@ -805,113 +877,192 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
 
             const defaultThen = { mode: 'continue', selector: '', value: '', targetStepNumber: '' };
             const defaultElse = { mode: 'continue', selector: '', value: '', targetStepNumber: '' };
-            const branch = condPassed ? (opts.thenBranch || defaultThen) : (opts.elseBranch || defaultElse);
+            const actionsList = condPassed
+              ? Array.isArray(opts.thenActions) && opts.thenActions.length > 0
+                ? opts.thenActions
+                : [opts.thenBranch || defaultThen]
+              : Array.isArray(opts.elseActions) && opts.elseActions.length > 0
+              ? opts.elseActions
+              : [opts.elseBranch || defaultElse];
+
             const branchLabel = condPassed ? 'THEN (True)' : 'ELSE (False)';
-            const branchMode = branch.mode || 'continue';
+            const modesSummary = actionsList.map((a) => a.mode || 'continue').join(' → ');
 
             extractedVars[stepKey] = condActual;
             extractedVars[`${stepKey}.passed`] = condPassed ? 'TRUE' : 'FALSE';
-            rowResult[`_Condition_Step_${sIdx + 1}`] = `${condPassed ? 'TRUE → THEN' : 'FALSE → ELSE'} (${branchMode})`;
+            rowResult[`_Condition_Step_${sIdx + 1}`] = `${condPassed ? 'TRUE → THEN' : 'FALSE → ELSE'} (${modesSummary})`;
 
             await appendRunLog(
               condPassed ? 'success' : 'info',
-              `🔀 IF Condition ${condPassed ? 'TRUE' : 'FALSE'} [${ condReason }] → Running ${branchLabel}: ${branchMode.toUpperCase()}`
+              `🔀 IF Condition ${condPassed ? 'TRUE' : 'FALSE'} [${condReason}] → Running ${branchLabel}: ${modesSummary.toUpperCase()}`
             );
 
-            if (branchMode === 'continue' || branchMode === 'none') {
-              // Proceed normally to next step
-            } else if (branchMode === 'skip_next') {
-              await appendRunLog('info', `↪ ${branchLabel}: Skipping next step (Step ${sIdx + 2}).`);
-              sIdx += 1;
-            } else if (branchMode === 'jump_to_step') {
-              const targetStepNum = parseInt(branch.targetStepNumber, 10);
-              if (!Number.isNaN(targetStepNum) && targetStepNum >= 1 && targetStepNum <= project.steps.length) {
-                await appendRunLog('info', `↪ ${branchLabel}: Jumping to Step #${targetStepNum}.`);
-                sIdx = targetStepNum - 2; // loop increment sIdx++ will land on targetStepNum - 1
-                break;
-              }
-            } else if (branchMode === 'skip_row') {
-              await appendRunLog('warn', `↪ ${branchLabel}: Skipping remaining steps for Row #${actualRowNumber}.`);
-              rowSkippedReason = `Skipped at Step ${sIdx + 1} (${branchLabel})`;
-              skipRemainingStepsForRow = true;
-            } else if (branchMode === 'stop_workflow') {
-              const stopMsg = `Stopped workflow by ${branchLabel} branch at Step ${sIdx + 1} (${stepLabel}).`;
-              rowResult._Status = 'STOPPED';
-              rowResult._Status_Details = stopMsg;
-              rowResult._Timestamp = new Date().toISOString();
-              extractedResults.push(rowResult);
-              await updateRunnerState({ results: extractedResults });
-              await saveRunResultsToProject(project.id, extractedResults);
-              throw new Error(stopMsg);
-            } else if (branchMode === 'navigate') {
-              let branchUrl = FlowTagCSV.interpolateValue(branch.value || '', {
-                masterRow,
-                stepRow,
-                masterRowIndex: actualRowNumber - 1,
-                stepRowIndex,
-                extractedVars
-              });
-              if (branchUrl) {
-                if (!/^https?:\/\//i.test(branchUrl)) branchUrl = 'https://' + branchUrl;
-                const waitNav = waitForTabComplete(targetTab.id, 20000);
-                await chrome.tabs.update(targetTab.id, { url: branchUrl });
-                await waitNav;
-                await sleep(500);
-                await ensureContentScriptInjected(targetTab.id);
-              }
-            } else if (['click', 'input', 'select', 'extract'].includes(branchMode)) {
-              const branchRawSel = branch.selector || step.selector || '';
-              const branchSelector = FlowTagCSV.interpolateValue(branchRawSel, {
-                masterRow,
-                stepRow,
-                masterRowIndex: actualRowNumber - 1,
-                stepRowIndex,
-                extractedVars
-              });
-              const branchValue = FlowTagCSV.interpolateValue(branch.value || '', {
-                masterRow,
-                stepRow,
-                masterRowIndex: actualRowNumber - 1,
-                stepRowIndex,
-                extractedVars
-              });
-              await ensureContentScriptInjected(targetTab.id);
-              const branchExec = await sendMessageToTabSafe(targetTab.id, {
-                type: 'EXECUTE_DOM_STEP',
-                step: {
-                  id: `${step.id}_${condPassed ? 'then' : 'else'}`,
-                  name: `${stepLabel} (${branchLabel})`,
-                  type: branchMode,
-                  selector: branchSelector,
-                  resolvedSelector: branchSelector,
-                  value: branchValue,
-                  resolvedValue: branchValue,
-                  resolvedRowAnchor,
-                  options: {
-                    clearFirst: true,
-                    pressEnter: Boolean(branch.pressEnter),
-                    extractTarget: branch.extractTarget || 'text',
-                    outputColumn: branch.outputColumn || `Branch_Step_${sIdx + 1}`
-                  }
-                }
-              });
+            let jumpedStep = false;
 
-              if (branchExec && branchExec.ok) {
-                if (branchExec.stepOutput !== undefined) {
-                  extractedVars[stepKey] = branchExec.stepOutput;
-                }
-                if (branchMode === 'extract') {
-                  const outCol = branch.outputColumn || `Branch_Extracted_${sIdx + 1}`;
-                  rowResult[outCol] = branchExec.extractedValue ?? '';
-                  extractedVars[outCol] = branchExec.extractedValue ?? '';
-                }
-                await appendRunLog('success', `✓ ${branchLabel} action (${branchMode}) completed.`);
-              } else if (branchExec && !branchExec.ok) {
-                await appendRunLog('error', `✗ ${branchLabel} action (${branchMode}) error: ${branchExec.error}`);
-                rowErrors.push(`Step ${sIdx + 1} ${branchLabel} (${branchMode}): ${branchExec.error}`);
-                rowResult[`_Error_Step_${sIdx + 1}`] = branchExec.error;
+            const executeSingleChainedAction = async (branch, actionLabel) => {
+              const branchMode = branch.mode || 'continue';
+              if (branchMode === 'continue' || branchMode === 'none') {
+                return 'continue';
               }
+              if (branchMode === 'wait') {
+                const wVal = FlowTagCSV.interpolateValue(branch.value || '1', interpCtx);
+                const wSec = parseFloat(wVal) || 1;
+                await appendRunLog('info', `⏱ ${actionLabel}: Waiting ${wSec}s...`);
+                await sleep(Math.min(wSec * 1000, 60000));
+                return 'ok';
+              }
+              if (branchMode === 'skip_next') {
+                await appendRunLog('info', `↪ ${actionLabel}: Skipping next step (Step ${sIdx + 2}).`);
+                sIdx += 1;
+                return 'break';
+              }
+              if (branchMode === 'jump_to_step') {
+                const targetStepNum = parseInt(branch.targetStepNumber, 10);
+                if (!Number.isNaN(targetStepNum) && targetStepNum >= 1 && targetStepNum <= project.steps.length) {
+                  await appendRunLog('info', `↪ ${actionLabel}: Jumping to Step #${targetStepNum}.`);
+                  sIdx = targetStepNum - 2;
+                  jumpedStep = true;
+                  return 'break';
+                }
+                return 'ok';
+              }
+              if (branchMode === 'skip_row') {
+                await appendRunLog('warn', `↪ ${actionLabel}: Skipping remaining steps for Row #${actualRowNumber}.`);
+                rowSkippedReason = `Skipped at Step ${sIdx + 1} (${actionLabel})`;
+                skipRemainingStepsForRow = true;
+                return 'break';
+              }
+              if (branchMode === 'stop_workflow') {
+                const stopMsg = `Stopped workflow by ${actionLabel} at Step ${sIdx + 1} (${stepLabel}).`;
+                rowResult._Status = 'STOPPED';
+                rowResult._Status_Details = stopMsg;
+                rowResult._Timestamp = new Date().toISOString();
+                extractedResults.push(rowResult);
+                await updateRunnerState({ results: extractedResults });
+                await saveRunResultsToProject(project.id, extractedResults);
+                throw new Error(stopMsg);
+              }
+              if (branchMode === 'navigate') {
+                let branchUrl = FlowTagCSV.interpolateValue(branch.value || '', interpCtx);
+                if (branchUrl) {
+                  if (!/^https?:\/\//i.test(branchUrl)) branchUrl = 'https://' + branchUrl;
+                  const waitNav = waitForTabComplete(targetTab.id, 20000);
+                  await chrome.tabs.update(targetTab.id, { url: branchUrl });
+                  await waitNav;
+                  await sleep(500);
+                  await ensureContentScriptInjected(targetTab.id);
+                }
+                return 'ok';
+              }
+              if (branchMode === 'nested_if') {
+                const nSource = branch.ifSource || 'csv_or_var';
+                const nCondOp = branch.verifyCondition || 'contains';
+                const nExpected = FlowTagCSV.interpolateValue(branch.value || '', interpCtx);
+                let nPassed = false;
+                let nReason = '';
+                if (nSource === 'csv_or_var') {
+                  const nLeft = FlowTagCSV.interpolateValue(branch.ifLeftValue || '', interpCtx);
+                  const nEval = FlowTagCSV.evaluateVerification(nLeft, nCondOp, nExpected, false);
+                  nPassed = nEval.passed;
+                  nReason = `${branch.ifLeftValue || ''} = "${nLeft}" → ${nEval.reason}`;
+                } else {
+                  const nSel = FlowTagCSV.interpolateValue(branch.selector || step.selector || '', interpCtx);
+                  await ensureContentScriptInjected(targetTab.id);
+                  const nCheck = await sendMessageToTabSafe(targetTab.id, {
+                    type: 'EXECUTE_DOM_STEP',
+                    step: {
+                      id: `${step.id}_nested_check`,
+                      type: 'condition_check',
+                      selector: nSel,
+                      resolvedSelector: nSel,
+                      value: nExpected,
+                      resolvedValue: nExpected,
+                      resolvedRowAnchor,
+                      pageTableConfig: activePageTableConfig,
+                      options: {
+                        ifSource: 'dom_element',
+                        verifyCondition: nCondOp,
+                        extractTarget: 'text'
+                      }
+                    }
+                  });
+                  nPassed = Boolean(nCheck && nCheck.ok && nCheck.verifyPassed);
+                  nReason = `Element (${nSel}) → ${nCheck?.verifyReason || 'checked'}`;
+                }
+                const subMode = nPassed ? (branch.nestedThenMode || 'click') : (branch.nestedElseMode || 'continue');
+                const subSel = nPassed ? (branch.nestedThenSelector || '') : (branch.nestedElseSelector || '');
+                const subVal = nPassed ? (branch.nestedThenValue || '') : (branch.nestedElseValue || '');
+                const subEnter = nPassed ? Boolean(branch.nestedThenPressEnter) : Boolean(branch.nestedElsePressEnter);
+                await appendRunLog(
+                  nPassed ? 'success' : 'info',
+                  `↳ Nested IF ${nPassed ? 'TRUE' : 'FALSE'} [${nReason}] → ${subMode.toUpperCase()}`
+                );
+                return executeSingleChainedAction(
+                  {
+                    mode: subMode,
+                    selector: subSel,
+                    value: subVal,
+                    pressEnter: subEnter
+                  },
+                  `${actionLabel} ↳ Nested ${nPassed ? 'THEN' : 'ELSE'}`
+                );
+              }
+              if (['click', 'input', 'select', 'extract', 'keypress'].includes(branchMode)) {
+                const branchRawSel = branch.selector || step.selector || '';
+                const branchSelector = FlowTagCSV.interpolateValue(branchRawSel, interpCtx);
+                const branchValue = FlowTagCSV.interpolateValue(branch.value || '', interpCtx);
+                await ensureContentScriptInjected(targetTab.id);
+                const branchExec = await sendMessageToTabSafe(targetTab.id, {
+                  type: 'EXECUTE_DOM_STEP',
+                  step: {
+                    id: `${step.id}_${condPassed ? 'then' : 'else'}`,
+                    name: `${stepLabel} (${actionLabel})`,
+                    type: branchMode,
+                    selector: branchSelector,
+                    resolvedSelector: branchSelector,
+                    value: branchValue,
+                    resolvedValue: branchValue,
+                    resolvedRowAnchor,
+                    pageTableConfig: activePageTableConfig,
+                    options: {
+                      clearFirst: true,
+                      pressEnter: Boolean(branch.pressEnter),
+                      extractTarget: branch.extractTarget || 'text',
+                      outputColumn: branch.outputColumn || `Branch_Step_${sIdx + 1}`
+                    }
+                  }
+                });
+
+                if (branchExec && branchExec.ok) {
+                  if (branchExec.stepOutput !== undefined) {
+                    extractedVars[stepKey] = branchExec.stepOutput;
+                  }
+                  if (branchMode === 'extract') {
+                    const outCol = branch.outputColumn || `Branch_Extracted_${sIdx + 1}`;
+                    rowResult[outCol] = branchExec.extractedValue ?? '';
+                    extractedVars[outCol] = branchExec.extractedValue ?? '';
+                  }
+                  await appendRunLog('success', `✓ ${actionLabel} (${branchMode}) completed.`);
+                  await sleep(350);
+                } else if (branchExec && !branchExec.ok) {
+                  await appendRunLog('error', `✗ ${actionLabel} (${branchMode}) error: ${branchExec.error}`);
+                  rowErrors.push(`Step ${sIdx + 1} ${actionLabel} (${branchMode}): ${branchExec.error}`);
+                  rowResult[`_Error_Step_${sIdx + 1}`] = branchExec.error;
+                }
+                return 'ok';
+              }
+              return 'ok';
+            };
+
+            for (let aIdx = 0; aIdx < actionsList.length; aIdx++) {
+              await waitWhilePausedOrStopped();
+              const actObj = actionsList[aIdx];
+              const actLabel =
+                actionsList.length > 1 ? `${branchLabel} #${aIdx + 1}` : branchLabel;
+              const status = await executeSingleChainedAction(actObj, actLabel);
+              if (status === 'break') break;
             }
+            if (jumpedStep) break;
           } else {
             // Execute DOM step inside Content Script
             await ensureContentScriptInjected(targetTab.id);
@@ -921,7 +1072,8 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
                 ...step,
                 resolvedSelector,
                 resolvedValue,
-                resolvedRowAnchor
+                resolvedRowAnchor,
+                pageTableConfig: activePageTableConfig
               }
             });
 

@@ -191,6 +191,235 @@ document.addEventListener('DOMContentLoaded', () => {
   // TAB 1: WORKFLOW STEPS SEQUENCER
   // ============================================================================
 
+  function generateFormulaSuggestions(columns = [], query = '') {
+    const list = [];
+    const qLower = query.toLowerCase().trim();
+
+    for (const col of columns) {
+      if (!col) continue;
+      const isDate = /date|esd|time|day|ship|submitted|order|due/i.test(col);
+      const isNum = /qty|quantity|price|amount|total|cost|rate|num|count/i.test(col);
+
+      const formulas = [
+        {
+          formula: `({{${col}}} + next business day)`,
+          label: 'Next Business Day',
+          tag: '📅 Date',
+          priority: isDate ? 10 : 3
+        },
+        {
+          formula: `({{${col}}} + 1 day)`,
+          label: '+1 Calendar Day',
+          tag: '📅 Date',
+          priority: isDate ? 9 : 2
+        },
+        {
+          formula: `({{${col}}} + 2 days)`,
+          label: '+2 Calendar Days',
+          tag: '📅 Date',
+          priority: isDate ? 8 : 1
+        },
+        {
+          formula: `({{${col}}} + 3 business days)`,
+          label: '+3 Business Days',
+          tag: '📅 Date',
+          priority: isDate ? 7 : 1
+        },
+        {
+          formula: `({{${col}}} - 1 day)`,
+          label: '-1 Calendar Day',
+          tag: '📅 Date',
+          priority: isDate ? 6 : 1
+        },
+        {
+          formula: `({{${col}}} + 1)`,
+          label: '+1 (Day or Math)',
+          tag: isDate ? '📅 Date' : '🧮 Math',
+          priority: isDate || isNum ? 8 : 2
+        },
+        {
+          formula: `({{${col}}} - 1)`,
+          label: '-1 (Day or Math)',
+          tag: isDate ? '📅 Date' : '🧮 Math',
+          priority: isDate || isNum ? 7 : 2
+        }
+      ];
+
+      if (isNum) {
+        formulas.push(
+          {
+            formula: `({{${col}}} * 1.1)`,
+            label: 'Multiply * 1.1 (+10%)',
+            tag: '🧮 Math',
+            priority: 6
+          },
+          {
+            formula: `({{${col}}} / 2)`,
+            label: 'Divide / 2',
+            tag: '🧮 Math',
+            priority: 5
+          }
+        );
+      }
+
+      list.push(...formulas);
+    }
+
+    list.sort((a, b) => b.priority - a.priority);
+
+    if (qLower) {
+      return list.filter(
+        (item) =>
+          item.formula.toLowerCase().includes(qLower) ||
+          item.label.toLowerCase().includes(qLower)
+      );
+    }
+    return list;
+  }
+
+  function setupDashboardFormulaAutocomplete(inputEl, menuEl, getColumnsFn, onSelectFn) {
+    if (!inputEl || !menuEl) return;
+    let activeIdx = -1;
+    let currentMatches = [];
+
+    const hideMenu = () => {
+      menuEl.style.display = 'none';
+      menuEl.innerHTML = '';
+      activeIdx = -1;
+      currentMatches = [];
+    };
+
+    const updateMenu = () => {
+      const val = inputEl.value || '';
+      const cursor = inputEl.selectionStart ?? val.length;
+      const textBefore = val.slice(0, cursor);
+      const openIdx = textBefore.lastIndexOf('(');
+
+      if (openIdx === -1) {
+        hideMenu();
+        return;
+      }
+
+      const textBetween = textBefore.slice(openIdx + 1);
+      if (textBetween.includes(')')) {
+        hideMenu();
+        return;
+      }
+
+      const rawQuery = textBetween
+        .replace(/^\{\{\s*|\s*\}\}$/g, '')
+        .replace(/^[+*\-\/]\s*/, '')
+        .trim();
+      const cols = getColumnsFn();
+      const suggestions = generateFormulaSuggestions(cols, rawQuery);
+
+      if (!suggestions || suggestions.length === 0) {
+        hideMenu();
+        return;
+      }
+
+      currentMatches = suggestions.slice(0, 8);
+      activeIdx = 0;
+
+      menuEl.innerHTML = `
+        <div class="dash-autocomplete-header">
+          <span>🧮 FORMULA AUTOCOMPLETE</span>
+          <span style="font-size:9px;color:#94a3b8;">↑↓ to navigate, Enter to pick</span>
+        </div>
+        ${currentMatches
+          .map(
+            (item, idx) => `
+          <div class="dash-autocomplete-item ${idx === 0 ? 'active' : ''}" data-idx="${idx}">
+            <div style="display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              <span style="color:#67e8f9;font-weight:600;">${escapeHtml(item.formula)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+              <span class="desc">${escapeHtml(item.label)}</span>
+              <span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(255,255,255,0.08);color:#cbd5e1;">${escapeHtml(item.tag)}</span>
+            </div>
+          </div>
+        `
+          )
+          .join('')}
+      `;
+      menuEl.style.display = 'block';
+
+      menuEl.querySelectorAll('.dash-autocomplete-item').forEach((itemEl) => {
+        itemEl.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const idx = parseInt(itemEl.getAttribute('data-idx'), 10);
+          selectItem(idx);
+        });
+      });
+    };
+
+    const selectItem = (idx) => {
+      const chosen = currentMatches[idx];
+      if (!chosen) return;
+      const val = inputEl.value || '';
+      const cursor = inputEl.selectionStart ?? val.length;
+      const textBefore = val.slice(0, cursor);
+      const textAfter = val.slice(cursor);
+      const openIdx = textBefore.lastIndexOf('(');
+
+      const closeIdx = textAfter.indexOf(')');
+      const remainderAfter = closeIdx !== -1 ? textAfter.slice(closeIdx + 1) : textAfter;
+      const remainderBefore = openIdx !== -1 ? textBefore.slice(0, openIdx) : textBefore;
+
+      const newVal = remainderBefore + chosen.formula + remainderAfter;
+      inputEl.value = newVal;
+      const newCursor = remainderBefore.length + chosen.formula.length;
+      inputEl.setSelectionRange(newCursor, newCursor);
+      hideMenu();
+
+      if (onSelectFn) {
+        onSelectFn(newVal);
+      } else {
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    };
+
+    inputEl.addEventListener('input', updateMenu);
+    inputEl.addEventListener('focus', updateMenu);
+
+    inputEl.addEventListener('keydown', (e) => {
+      if (menuEl.style.display !== 'block') return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        activeIdx = (activeIdx + 1) % currentMatches.length;
+        renderActive();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        activeIdx = (activeIdx - 1 + currentMatches.length) % currentMatches.length;
+        renderActive();
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (activeIdx >= 0 && activeIdx < currentMatches.length) {
+          e.preventDefault();
+          selectItem(activeIdx);
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        hideMenu();
+      }
+    });
+
+    const renderActive = () => {
+      menuEl.querySelectorAll('.dash-autocomplete-item').forEach((el, idx) => {
+        if (idx === activeIdx) {
+          el.classList.add('active');
+          el.scrollIntoView({ block: 'nearest' });
+        } else {
+          el.classList.remove('active');
+        }
+      });
+    };
+
+    inputEl.addEventListener('blur', () => {
+      setTimeout(hideMenu, 220);
+    });
+  }
+
   function renderStepsSequencer(proj) {
     stepsContainer.innerHTML = '';
     const steps = proj.steps || [];
@@ -239,90 +468,175 @@ document.addEventListener('DOMContentLoaded', () => {
         'element_exists',
         'element_not_exists'
       ].includes(verifyCond);
-      const thenBranch = step.options?.thenBranch || {
-        mode: step.type === 'condition' ? 'input' : 'continue',
-        selector: step.selector || '',
-        value: '',
-        targetStepNumber: '',
-        pressEnter: false
+      step.options = step.options || {};
+      const ensureDashBranchActions = (opts, branchKey) => {
+        const arrKey = branchKey === 'else' ? 'elseActions' : 'thenActions';
+        const legacyKey = branchKey === 'else' ? 'elseBranch' : 'thenBranch';
+        if (!Array.isArray(opts[arrKey]) || opts[arrKey].length === 0) {
+          if (opts[legacyKey] && typeof opts[legacyKey] === 'object') {
+            opts[arrKey] = [{ ...opts[legacyKey] }];
+          } else {
+            opts[arrKey] = [
+              {
+                mode: branchKey === 'else' ? 'continue' : 'click',
+                selector: branchKey === 'then' ? step.selector || '' : '',
+                value: '',
+                targetStepNumber: '',
+                pressEnter: false
+              }
+            ];
+          }
+        }
+        return opts[arrKey];
       };
-      const elseBranch = step.options?.elseBranch || {
-        mode: 'continue',
-        selector: '',
-        value: '',
-        targetStepNumber: '',
-        pressEnter: false
+      const syncDashLegacyBranches = (opts) => {
+        if (Array.isArray(opts.thenActions) && opts.thenActions.length > 0) {
+          opts.thenBranch = { ...opts.thenActions[0] };
+        }
+        if (Array.isArray(opts.elseActions) && opts.elseActions.length > 0) {
+          opts.elseBranch = { ...opts.elseActions[0] };
+        }
       };
 
-      const renderDashBranchCard = (prefix, title, borderCol, branchObj) => {
-        const bMode = branchObj.mode || 'continue';
-        const bNeedsSel = ['click', 'input', 'select', 'extract'].includes(bMode);
-        const bNeedsVal = ['input', 'select', 'navigate'].includes(bMode);
-        const bNeedsOutCol = bMode === 'extract';
-        const bNeedsJump = bMode === 'jump_to_step';
+      const thenActions = ensureDashBranchActions(step.options, 'then');
+      const elseActions = ensureDashBranchActions(step.options, 'else');
 
+      const renderDashBranchCard = (prefix, title, borderCol, actionsList) => {
         return `
-          <div style="background:#0f172a;border:1px solid ${borderCol};border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-              <span style="font-weight:700;font-size:12.5px;color:${borderCol};">${title}</span>
-              <select class="select" data-branch-mode="${prefix}" style="max-width:250px;">
-                <option value="continue" ${bMode === 'continue' ? 'selected' : ''}>↪ Continue to Next Step</option>
-                <option value="input" ${bMode === 'input' ? 'selected' : ''}>⌨️ Type / Fill Input</option>
-                <option value="click" ${bMode === 'click' ? 'selected' : ''}>👆 Click Element</option>
-                <option value="select" ${bMode === 'select' ? 'selected' : ''}>▾ Select Dropdown Option</option>
-                <option value="extract" ${bMode === 'extract' ? 'selected' : ''}>📋 Extract Data</option>
-                <option value="navigate" ${bMode === 'navigate' ? 'selected' : ''}>🌐 Go to URL</option>
-                <option value="skip_next" ${bMode === 'skip_next' ? 'selected' : ''}>⏭ Skip Next 1 Step</option>
-                <option value="jump_to_step" ${bMode === 'jump_to_step' ? 'selected' : ''}>🔢 Jump to Step #</option>
-                <option value="skip_row" ${bMode === 'skip_row' ? 'selected' : ''}>⏭ Skip Rest of CSV Row</option>
-                <option value="stop_workflow" ${bMode === 'stop_workflow' ? 'selected' : ''}>⏹ Stop Entire Workflow</option>
-              </select>
+          <div style="background:#0f172a;border:1px solid ${borderCol};border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <span style="font-weight:700;font-size:12.5px;color:${borderCol};">${title} (${actionsList.length} action${actionsList.length === 1 ? '' : 's'})</span>
+              <div style="display:flex;gap:6px;">
+                <button type="button" class="btn btn-secondary btn-sm" data-dash-chain-add="${prefix}:click" style="border-color:${borderCol};color:${borderCol};">
+                  + Add Action
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" data-dash-chain-add="${prefix}:nested_if" style="border-color:#ec4899;color:#f9a8d4;">
+                  + Nested IF
+                </button>
+              </div>
             </div>
 
-            ${
-              bNeedsSel
-                ? `<div class="field-group">
-                    <label class="field-label">Target CSS Selector (leave blank to reuse IF selector)</label>
-                    <input type="text" class="input mono" data-branch-field="${prefix}:selector" value="${escapeHtml(branchObj.selector || '')}" placeholder="e.g. input[name$='.cancelled'], #btn-submit" />
-                   </div>`
-                : ''
-            }
+            ${actionsList
+              .map((branchObj, actIdx) => {
+                const bMode = branchObj.mode || 'continue';
+                const bNeedsSel = ['click', 'input', 'select', 'extract', 'keypress'].includes(bMode);
+                const bNeedsVal = ['input', 'select', 'navigate', 'wait', 'keypress'].includes(bMode);
+                const bNeedsOutCol = bMode === 'extract';
+                const bNeedsJump = bMode === 'jump_to_step';
 
-            ${
-              bNeedsVal
-                ? `<div class="field-group">
-                    <label class="field-label">${bMode === 'navigate' ? 'Target URL' : 'Value to Enter / Select (supports {{CSV_Col}} or {{prev.step_X}})'}</label>
-                    <input type="text" class="input" data-branch-field="${prefix}:value" value="${escapeHtml(branchObj.value || '')}" placeholder="Static text or {{Column_Name}}" />
+                return `
+                  <div style="background:#1e293b;border:1px solid #334155;border-left:3px solid ${borderCol};border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                      <span style="font-weight:800;font-size:11.5px;color:${borderCol};">#${actIdx + 1}</span>
+                      <select class="select" data-dash-chain-mode="${prefix}:${actIdx}" style="flex:1;">
+                        <option value="click" ${bMode === 'click' ? 'selected' : ''}>👆 Click Element (Row or Page)</option>
+                        <option value="input" ${bMode === 'input' ? 'selected' : ''}>⌨️ Type / Fill Input</option>
+                        <option value="select" ${bMode === 'select' ? 'selected' : ''}>▾ Select Dropdown Option</option>
+                        <option value="wait" ${bMode === 'wait' ? 'selected' : ''}>⏱ Wait / Delay (Seconds)</option>
+                        <option value="keypress" ${bMode === 'keypress' ? 'selected' : ''}>⏎ Press Keyboard Key</option>
+                        <option value="extract" ${bMode === 'extract' ? 'selected' : ''}>📋 Extract Data</option>
+                        <option value="nested_if" ${bMode === 'nested_if' ? 'selected' : ''}>🔀 Nested IF Condition</option>
+                        <option value="continue" ${bMode === 'continue' ? 'selected' : ''}>↪ Continue to Next Step</option>
+                        <option value="skip_row" ${bMode === 'skip_row' ? 'selected' : ''}>⏭ Skip Rest of Row</option>
+                        <option value="skip_next" ${bMode === 'skip_next' ? 'selected' : ''}>⏭ Skip Next 1 Step</option>
+                        <option value="jump_to_step" ${bMode === 'jump_to_step' ? 'selected' : ''}>🔢 Jump to Step #</option>
+                        <option value="navigate" ${bMode === 'navigate' ? 'selected' : ''}>🌐 Go to URL</option>
+                        <option value="stop_workflow" ${bMode === 'stop_workflow' ? 'selected' : ''}>⏹ Stop Entire Workflow</option>
+                      </select>
+                      ${
+                        actionsList.length > 1
+                          ? `<button type="button" class="btn btn-danger btn-sm" data-dash-chain-del="${prefix}:${actIdx}" title="Remove Action">✕</button>`
+                          : ''
+                      }
+                    </div>
+
                     ${
-                      masterHeaders.length > 0
-                        ? `<div class="token-bar">
-                            ${masterHeaders
-                              .map((h) => `<span class="token-pill" data-branch-insert="${prefix}:{{${escapeHtml(h)}}}">+ {{${escapeHtml(h)}}}</span>`)
-                              .join('')}
+                      bNeedsSel
+                        ? `<div class="field-group">
+                            <label class="field-label">Target CSS Selector (e.g. td:nth-of-type(3) a for current row)</label>
+                            <input type="text" class="input mono" data-dash-chain-field="${prefix}:${actIdx}:selector" value="${escapeHtml(branchObj.selector || '')}" placeholder="e.g. td:nth-of-type(3) a, or modal input selector" />
                            </div>`
                         : ''
                     }
-                   </div>`
-                : ''
-            }
 
-            ${
-              bNeedsOutCol
-                ? `<div class="field-group">
-                    <label class="field-label">Output CSV Column</label>
-                    <input type="text" class="input mono" data-branch-field="${prefix}:outputColumn" value="${escapeHtml(branchObj.outputColumn || 'Branch_Extracted')}" />
-                   </div>`
-                : ''
-            }
+                    ${
+                      bNeedsVal
+                        ? `<div class="field-group">
+                            <label class="field-label">${
+                              bMode === 'navigate'
+                                ? 'Target URL'
+                                : bMode === 'wait'
+                                ? 'Wait Seconds'
+                                : bMode === 'keypress'
+                                ? 'Key to Press (Enter, Tab, Escape)'
+                                : 'Value to Enter / Select (supports {{Column}} or {{prev.step_X}})'
+                            }</label>
+                            <div style="position:relative;">
+                              <input type="text" class="input" data-dash-chain-field="${prefix}:${actIdx}:value" value="${escapeHtml(branchObj.value || '')}" placeholder="Static text, {{Column_Name}}, or ({{Col}} + 1)" autocomplete="off" />
+                              <div class="dash-autocomplete-menu"></div>
+                            </div>
+                            ${
+                              masterHeaders.length > 0 && ['input', 'select', 'navigate'].includes(bMode)
+                                ? `<div class="token-bar">
+                                    ${masterHeaders
+                                      .map((h) => `<span class="token-pill" data-dash-chain-insert="${prefix}:${actIdx}:{{${escapeHtml(h)}}}">+ {{${escapeHtml(h)}}}</span>`)
+                                      .join('')}
+                                    ${masterHeaders
+                                      .filter((h) => /date|esd|time|day|ship|submitted|order|due/i.test(h))
+                                      .slice(0, 2)
+                                      .map((h) => `<span class="token-pill formula-token" data-dash-chain-insert="${prefix}:${actIdx}:({{${escapeHtml(h)}}} + next business day)" title="Formula: Add next business day">📅 ({{${escapeHtml(h)}}} + next biz day)</span>`)
+                                      .join('')}
+                                   </div>`
+                                : ''
+                            }
+                           </div>`
+                        : ''
+                    }
 
-            ${
-              bNeedsJump
-                ? `<div class="field-group">
-                    <label class="field-label">Jump to Step # (1 to ${steps.length})</label>
-                    <input type="number" min="1" max="${steps.length}" class="input" data-branch-field="${prefix}:targetStepNumber" value="${escapeHtml(branchObj.targetStepNumber || '1')}" />
-                   </div>`
-                : ''
-            }
+                    ${
+                      bNeedsOutCol
+                        ? `<div class="field-group">
+                            <label class="field-label">Output Column</label>
+                            <input type="text" class="input mono" data-dash-chain-field="${prefix}:${actIdx}:outputColumn" value="${escapeHtml(branchObj.outputColumn || 'Branch_Extracted')}" />
+                           </div>`
+                        : ''
+                    }
+
+                    ${
+                      bNeedsJump
+                        ? `<div class="field-group">
+                            <label class="field-label">Jump to Step # (1 to ${steps.length})</label>
+                            <input type="number" min="1" max="${steps.length}" class="input" data-dash-chain-field="${prefix}:${actIdx}:targetStepNumber" value="${escapeHtml(branchObj.targetStepNumber || '1')}" />
+                           </div>`
+                        : ''
+                    }
+
+                    ${
+                      bMode === 'nested_if'
+                        ? `<div style="background:#0f172a;border:1px dashed #ec4899;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;">
+                            <div style="font-size:11px;font-weight:700;color:#f9a8d4;">🔀 Nested IF Check:</div>
+                            <input type="text" class="input mono" data-dash-chain-field="${prefix}:${actIdx}:ifLeftValue" value="${escapeHtml(branchObj.ifLeftValue || '')}" placeholder="Column / Variable to check (e.g. {{PO_Submitted_Date}})" />
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                              <select class="select" data-dash-chain-field="${prefix}:${actIdx}:verifyCondition">
+                                <option value="contains" ${(branchObj.verifyCondition || 'contains') === 'contains' ? 'selected' : ''}>Contains</option>
+                                <option value="equals" ${branchObj.verifyCondition === 'equals' ? 'selected' : ''}>Equals (==)</option>
+                                <option value="not_equals" ${branchObj.verifyCondition === 'not_equals' ? 'selected' : ''}>Not Equals (!=)</option>
+                                <option value="not_empty" ${branchObj.verifyCondition === 'not_empty' ? 'selected' : ''}>Not Empty</option>
+                                <option value="is_empty" ${branchObj.verifyCondition === 'is_empty' ? 'selected' : ''}>Is Empty</option>
+                              </select>
+                              <input type="text" class="input" data-dash-chain-field="${prefix}:${actIdx}:value" value="${escapeHtml(branchObj.value || '')}" placeholder="Expected value..." />
+                            </div>
+                            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                              <input type="text" class="input mono" data-dash-chain-field="${prefix}:${actIdx}:nestedThenSelector" value="${escapeHtml(branchObj.nestedThenSelector || '')}" placeholder="Nested THEN Selector" />
+                              <input type="text" class="input" data-dash-chain-field="${prefix}:${actIdx}:nestedThenValue" value="${escapeHtml(branchObj.nestedThenValue || '')}" placeholder="Nested THEN Value" />
+                            </div>
+                           </div>`
+                        : ''
+                    }
+                  </div>
+                `;
+              })
+              .join('')}
           </div>
         `;
       };
@@ -563,13 +877,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 }</span>
               </label>
               <div style="display:flex;gap:8px;">
-                <input type="text" class="input" data-field="value" value="${escapeHtml(step.value || '')}" placeholder="${
-                  step.type === 'navigate'
-                    ? 'https://example.com/search?q={{query}}'
-                    : step.type === 'verify'
-                    ? 'Expected word, string, or number...'
-                    : 'Value, {{csv_column}}, or {{prev.step_1}}'
-                }" style="flex:1.4;" />
+                <div style="flex:1.4;position:relative;">
+                  <input type="text" class="input" data-field="value" value="${escapeHtml(step.value || '')}" placeholder="${
+                    step.type === 'navigate'
+                      ? 'https://example.com/search?q={{query}}'
+                      : step.type === 'verify'
+                      ? 'Expected word, string, or number...'
+                      : 'Value, {{csv_column}}, or ({{Col}} + 1)'
+                  }" style="width:100%;" autocomplete="off" />
+                  <div class="dash-autocomplete-menu"></div>
+                </div>
                 ${
                   prevSteps.length > 0
                     ? `<select class="select" data-prev-step-select style="flex:1;border-color:rgba(168,85,247,0.45);color:#e9d5ff;font-size:12px;">
@@ -601,6 +918,19 @@ document.addEventListener('DOMContentLoaded', () => {
                             `<span class="token-pill" style="background:rgba(168,85,247,0.16);color:#d8b4fe;border-color:rgba(168,85,247,0.4);" data-insert-token="${escapeHtml(ps.token)}" title="Insert output from ${escapeHtml(ps.label)}">🔗 Step ${ps.stepNum} (${escapeHtml(ps.token)})</span>`
                         )
                         .join('')}
+                      ${Array.from(new Set([...masterHeaders, ...stepHeaders]))
+                        .filter((h) => /date|esd|time|day|ship|submitted|order|due/i.test(h))
+                        .map((h) => `
+                          <span class="token-pill formula-token" data-insert-token="({{${escapeHtml(h)}}} + next business day)" title="Formula: Add next business day (skips weekend)">📅 ({{${escapeHtml(h)}}} + next biz day)</span>
+                          <span class="token-pill formula-token" data-insert-token="({{${escapeHtml(h)}}} + 1 day)" title="Formula: Add 1 calendar day">📅 ({{${escapeHtml(h)}}} + 1 day)</span>
+                        `)
+                        .join('')}
+                      ${Array.from(new Set([...masterHeaders, ...stepHeaders]))
+                        .filter((h) => /qty|quantity|price|amount|total|cost|rate|num|count/i.test(h))
+                        .map((h) => `
+                          <span class="token-pill formula-token" data-insert-token="({{${escapeHtml(h)}}} + 1)" title="Formula: Add 1">🧮 ({{${escapeHtml(h)}}} + 1)</span>
+                        `)
+                        .join('')}
                      </div>`
                   : ''
               }
@@ -617,8 +947,8 @@ document.addEventListener('DOMContentLoaded', () => {
             step.type === 'condition'
               ? `
             <div style="grid-column: 1 / -1; display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px;">
-              ${renderDashBranchCard('then', '✅ THEN (When IF is TRUE)', '#10b981', thenBranch)}
-              ${renderDashBranchCard('else', '❌ ELSE (When IF is FALSE)', '#f59e0b', elseBranch)}
+              ${renderDashBranchCard('then', '✅ THEN (When IF is TRUE)', '#10b981', thenActions)}
+              ${renderDashBranchCard('else', '❌ ELSE (When IF is FALSE)', '#f59e0b', elseActions)}
             </div>
           `
               : ''
@@ -647,14 +977,20 @@ document.addEventListener('DOMContentLoaded', () => {
               </label>
             </div>
 
-            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#93c5fd;cursor:pointer;font-weight:600;">
-              <input type="checkbox" data-stepcsv-toggle ${stepCsv.enabled ? 'checked' : ''} />
-              📂 Pick Value from CSV File on This Step
-            </label>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#93c5fd;cursor:pointer;font-weight:600;">
+                <input type="checkbox" data-stepcsv-toggle ${stepCsv.enabled && stepCsv.sourceType !== 'page_table' ? 'checked' : ''} />
+                📂 Pick Value from CSV File on This Step
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#7dd3fc;cursor:pointer;font-weight:600;">
+                <input type="checkbox" data-steptable-toggle ${stepCsv.enabled && stepCsv.sourceType === 'page_table' ? 'checked' : ''} />
+                🌐 Pick Value from Page Table / HTML List on This Step
+              </label>
+            </div>
           </div>
 
           ${
-            stepCsv.enabled
+            stepCsv.enabled && stepCsv.sourceType !== 'page_table'
               ? `
             <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
               <div style="display:flex;align-items:center;gap:10px;">
@@ -678,6 +1014,40 @@ document.addEventListener('DOMContentLoaded', () => {
                 </select>
                 <select class="select" data-stepcsv-col style="width:auto;padding:5px 8px;font-size:12px;">
                   <option value="">-- Select Column to Pick --</option>
+                  ${(stepCsv.headers || [])
+                    .map((h) => `<option value="${escapeHtml(h)}" ${stepCsv.columnName === h ? 'selected' : ''}>Column: ${escapeHtml(h)}</option>`)
+                    .join('')}
+                </select>
+              </div>
+            </div>
+          `
+              : ''
+          }
+
+          ${
+            stepCsv.enabled && stepCsv.sourceType === 'page_table'
+              ? `
+            <div style="background:rgba(14,165,233,0.08);border:1px solid rgba(56,189,248,0.35);border-radius:8px;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-secondary btn-sm" data-steptable-pick style="background:rgba(14,165,233,0.18);border-color:#0284c7;color:#7dd3fc;">
+                  🎯 ${stepCsv.containerSelector ? 'Re-Pick Table on Page' : 'Pick Table on Page'}
+                </button>
+                <span style="font-size:12px;color:#e0f2fe;">
+                  ${
+                    stepCsv.containerSelector
+                      ? `<b>${escapeHtml(stepCsv.fileName || stepCsv.containerSelector)}</b> (${stepCsv.rows?.length || 0} rows · Columns: ${(stepCsv.headers || []).join(', ')})`
+                      : 'Click "🎯 Pick Table on Page" or pick any table cell with the element picker'
+                  }
+                </span>
+              </div>
+
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <select class="select" data-stepcsv-mode style="width:auto;padding:5px 8px;font-size:12px;">
+                  <option value="sequence_row" ${stepCsv.mode !== 'loop_step' ? 'selected' : ''}>Pick 1 row per Full Sequence Flow (e.g. 20 rows = run whole sequence 20 times)</option>
+                  <option value="loop_step" ${stepCsv.mode === 'loop_step' ? 'selected' : ''}>Repeat only this single step for all rows before next step</option>
+                </select>
+                <select class="select" data-stepcsv-col style="width:auto;padding:5px 8px;font-size:12px;">
+                  <option value="">-- Select Column from Table --</option>
                   ${(stepCsv.headers || [])
                     .map((h) => `<option value="${escapeHtml(h)}" ${stepCsv.columnName === h ? 'selected' : ''}>Column: ${escapeHtml(h)}</option>`)
                     .join('')}
@@ -740,10 +1110,43 @@ document.addEventListener('DOMContentLoaded', () => {
       card.querySelectorAll('[data-insert-token]').forEach((pill) => {
         pill.addEventListener('click', () => {
           const token = pill.getAttribute('data-insert-token');
-          step.value = (step.value || '') + token;
+          const curVal = step.value || '';
+          if (!curVal || (token.startsWith('(') && curVal.startsWith('{{') && curVal.endsWith('}}'))) {
+            step.value = token;
+          } else {
+            step.value = curVal + token;
+          }
           saveCurrentProject();
           renderStepsSequencer(proj);
         });
+      });
+
+      // Autocomplete on step value input
+      const valInput = card.querySelector('input[data-field="value"]');
+      const valMenu = valInput?.parentElement?.querySelector('.dash-autocomplete-menu');
+      if (valInput && valMenu) {
+        setupDashboardFormulaAutocomplete(valInput, valMenu, () => Array.from(headerSet), (newVal) => {
+          step.value = newVal;
+          saveCurrentProject();
+        });
+      }
+
+      // Autocomplete on chained action value inputs
+      card.querySelectorAll('[data-dash-chain-field*=":value"]').forEach((cInp) => {
+        const cMenu = cInp.parentElement?.querySelector('.dash-autocomplete-menu');
+        if (cMenu) {
+          setupDashboardFormulaAutocomplete(cInp, cMenu, () => Array.from(headerSet), (newVal) => {
+            const raw = cInp.getAttribute('data-dash-chain-field') || '';
+            const [prefix, idxStr] = raw.split(':');
+            const actIdx = parseInt(idxStr, 10);
+            const arr = ensureDashBranchActions(step.options, prefix);
+            if (arr[actIdx]) {
+              arr[actIdx].value = newVal;
+              syncLegacyBranch(step.options, prefix);
+              saveCurrentProject();
+            }
+          });
+        }
       });
 
       card.querySelectorAll('[data-ifleft-insert]').forEach((pill) => {
@@ -756,60 +1159,110 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
 
-      card.querySelectorAll('[data-branch-mode]').forEach((selEl) => {
+      card.querySelectorAll('[data-dash-chain-add]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const [prefix, defaultMode] = (btn.getAttribute('data-dash-chain-add') || '').split(':');
+          step.options = step.options || {};
+          const arr = ensureDashBranchActions(step.options, prefix);
+          arr.push({
+            mode: defaultMode || 'click',
+            selector: '',
+            value: '',
+            pressEnter: false,
+            ifSource: 'csv_or_var',
+            ifLeftValue: '',
+            verifyCondition: 'contains',
+            nestedThenMode: 'click',
+            nestedThenSelector: '',
+            nestedThenValue: '',
+            nestedElseMode: 'continue',
+            nestedElseSelector: '',
+            nestedElseValue: ''
+          });
+          syncDashLegacyBranches(step.options);
+          saveCurrentProject();
+          renderStepsSequencer(proj);
+        });
+      });
+
+      card.querySelectorAll('[data-dash-chain-del]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const [prefix, idxStr] = (btn.getAttribute('data-dash-chain-del') || '').split(':');
+          const actIdx = parseInt(idxStr, 10);
+          step.options = step.options || {};
+          const arr = ensureDashBranchActions(step.options, prefix);
+          if (arr.length > 1) {
+            arr.splice(actIdx, 1);
+            syncDashLegacyBranches(step.options);
+            saveCurrentProject();
+            renderStepsSequencer(proj);
+          }
+        });
+      });
+
+      card.querySelectorAll('[data-dash-chain-mode]').forEach((selEl) => {
         selEl.addEventListener('change', (e) => {
-          const prefix = e.target.getAttribute('data-branch-mode');
-          const prop = prefix === 'then' ? 'thenBranch' : 'elseBranch';
+          const [prefix, idxStr] = (e.target.getAttribute('data-dash-chain-mode') || '').split(':');
+          const actIdx = parseInt(idxStr, 10);
           step.options = step.options || {};
-          step.options[prop] = step.options[prop] || { mode: 'continue', selector: '', value: '' };
-          step.options[prop].mode = e.target.value;
-          saveCurrentProject();
-          renderStepsSequencer(proj);
+          const arr = ensureDashBranchActions(step.options, prefix);
+          if (arr[actIdx]) {
+            arr[actIdx].mode = e.target.value;
+            syncDashLegacyBranches(step.options);
+            saveCurrentProject();
+            renderStepsSequencer(proj);
+          }
         });
       });
 
-      card.querySelectorAll('[data-branch-field]').forEach((inEl) => {
+      card.querySelectorAll('[data-dash-chain-field]').forEach((inEl) => {
         inEl.addEventListener('change', (e) => {
-          const raw = e.target.getAttribute('data-branch-field') || '';
-          const [prefix, fieldName] = raw.split(':');
-          const prop = prefix === 'then' ? 'thenBranch' : 'elseBranch';
+          const raw = e.target.getAttribute('data-dash-chain-field') || '';
+          const [prefix, idxStr, fieldName] = raw.split(':');
+          const actIdx = parseInt(idxStr, 10);
           step.options = step.options || {};
-          step.options[prop] = step.options[prop] || { mode: 'continue', selector: '', value: '' };
-          step.options[prop][fieldName] = e.target.value;
-          saveCurrentProject();
+          const arr = ensureDashBranchActions(step.options, prefix);
+          if (arr[actIdx] && fieldName) {
+            arr[actIdx][fieldName] = e.target.value;
+            syncDashLegacyBranches(step.options);
+            saveCurrentProject();
+          }
         });
       });
 
-      card.querySelectorAll('[data-branch-insert]').forEach((pill) => {
+      card.querySelectorAll('[data-dash-chain-insert]').forEach((pill) => {
         pill.addEventListener('click', () => {
-          const raw = pill.getAttribute('data-branch-insert') || '';
-          const idxColon = raw.indexOf(':');
-          if (idxColon < 0) return;
-          const prefix = raw.slice(0, idxColon);
-          const token = raw.slice(idxColon + 1);
-          const prop = prefix === 'then' ? 'thenBranch' : 'elseBranch';
+          const raw = pill.getAttribute('data-dash-chain-insert') || '';
+          const parts = raw.split(':');
+          const prefix = parts[0];
+          const actIdx = parseInt(parts[1], 10);
+          const token = parts.slice(2).join(':');
           step.options = step.options || {};
-          step.options[prop] = step.options[prop] || { mode: 'input', selector: '', value: '' };
-          step.options[prop].value = (step.options[prop].value || '') + token;
-          saveCurrentProject();
-          renderStepsSequencer(proj);
+          const arr = ensureDashBranchActions(step.options, prefix);
+          if (arr[actIdx]) {
+            arr[actIdx].value = (arr[actIdx].value || '') + token;
+            syncDashLegacyBranches(step.options);
+            saveCurrentProject();
+            renderStepsSequencer(proj);
+          }
         });
       });
 
       card.querySelector('[data-stepcsv-toggle]')?.addEventListener('change', (e) => {
-        step.stepCsv = step.stepCsv || { enabled: false, mode: 'sequence_row', fileName: '', headers: [], rows: [], columnName: '' };
+        step.stepCsv = step.stepCsv || { enabled: false, sourceType: 'csv_file', mode: 'sequence_row', fileName: '', headers: [], rows: [], columnName: '' };
         step.stepCsv.enabled = e.target.checked;
+        step.stepCsv.sourceType = 'csv_file';
         if (!step.stepCsv.mode || step.stepCsv.mode === 'match_row' || step.stepCsv.mode === 'loop_step') {
           step.stepCsv.mode = 'sequence_row';
         }
         // Automatically reuse CSV from Master CSV or an earlier step if this step doesn't have one yet
         if (e.target.checked && (!step.stepCsv.rows || step.stepCsv.rows.length === 0)) {
           let existingCsv = null;
-          if (proj.masterCsv && Array.isArray(proj.masterCsv.rows) && proj.masterCsv.rows.length > 0) {
+          if (proj.masterCsv && Array.isArray(proj.masterCsv.rows) && proj.masterCsv.rows.length > 0 && proj.masterCsv.sourceType !== 'page_table') {
             existingCsv = proj.masterCsv;
           } else {
             for (const st of proj.steps || []) {
-              if (st.stepCsv && Array.isArray(st.stepCsv.rows) && st.stepCsv.rows.length > 0) {
+              if (st.stepCsv && st.stepCsv.sourceType !== 'page_table' && Array.isArray(st.stepCsv.rows) && st.stepCsv.rows.length > 0) {
                 existingCsv = st.stepCsv;
                 break;
               }
@@ -825,6 +1278,62 @@ document.addEventListener('DOMContentLoaded', () => {
         renderAll();
       });
 
+      card.querySelector('[data-steptable-toggle]')?.addEventListener('change', (e) => {
+        step.stepCsv = step.stepCsv || { enabled: false, sourceType: 'page_table', mode: 'sequence_row', fileName: '', containerSelector: '', rowSelector: '', headers: [], rows: [], columnName: '' };
+        step.stepCsv.enabled = e.target.checked;
+        step.stepCsv.sourceType = 'page_table';
+        if (!step.stepCsv.mode || step.stepCsv.mode === 'match_row') {
+          step.stepCsv.mode = 'sequence_row';
+        }
+        if (e.target.checked) {
+          let existingTable = null;
+          if (proj.pageTableSource && proj.pageTableSource.containerSelector && Array.isArray(proj.pageTableSource.headers)) {
+            existingTable = proj.pageTableSource;
+          } else {
+            for (const st of proj.steps || []) {
+              if (st.stepCsv && st.stepCsv.sourceType === 'page_table' && st.stepCsv.containerSelector) {
+                existingTable = st.stepCsv;
+                break;
+              }
+            }
+          }
+          if (existingTable) {
+            step.stepCsv.fileName = existingTable.fileName || existingTable.label || existingTable.containerSelector;
+            step.stepCsv.containerSelector = existingTable.containerSelector;
+            step.stepCsv.rowSelector = existingTable.rowSelector || 'tbody tr, tr';
+            step.stepCsv.headers = [...(existingTable.headers || [])];
+            step.stepCsv.rows = existingTable.rows || [];
+            if (!step.stepCsv.columnName && step.stepCsv.headers[0]) {
+              step.stepCsv.columnName = step.stepCsv.headers[0];
+              if (step.type === 'condition') {
+                step.options = step.options || {};
+                step.options.ifSource = 'csv_or_var';
+                if (!step.options.ifLeftValue) {
+                  step.options.ifLeftValue = `{{${step.stepCsv.headers[0]}}}`;
+                }
+              } else if (!step.value) {
+                step.value = `{{${step.stepCsv.headers[0]}}}`;
+              }
+            }
+          }
+        }
+        saveCurrentProject();
+        renderAll();
+      });
+
+      card.querySelector('[data-steptable-pick]')?.addEventListener('click', () => {
+        if (builderSession.tabId) {
+          chrome.tabs.update(builderSession.tabId, { active: true });
+          chrome.tabs.sendMessage(builderSession.tabId, {
+            type: 'START_TABLE_SOURCE_PICK',
+            projectId: proj.id,
+            stepId: step.id
+          });
+        } else {
+          launchVisualBuilder(proj);
+        }
+      });
+
       card.querySelector('[data-stepcsv-mode]')?.addEventListener('change', (e) => {
         step.stepCsv.mode = e.target.value;
         saveCurrentProject();
@@ -834,7 +1343,13 @@ document.addEventListener('DOMContentLoaded', () => {
       card.querySelector('[data-stepcsv-col]')?.addEventListener('change', (e) => {
         step.stepCsv.columnName = e.target.value;
         if (e.target.value) {
-          step.value = `{{${e.target.value}}}`;
+          if (step.type === 'condition') {
+            step.options = step.options || {};
+            step.options.ifSource = 'csv_or_var';
+            step.options.ifLeftValue = `{{${e.target.value}}}`;
+          } else {
+            step.value = `{{${e.target.value}}}`;
+          }
         }
         saveCurrentProject();
         renderStepsSequencer(proj);
@@ -848,6 +1363,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const parsed = window.FlowTagCSV.parseCSV(String(reader.result || ''));
           step.stepCsv = {
             enabled: true,
+            sourceType: 'csv_file',
             mode: step.stepCsv?.mode === 'loop_single_step' ? 'loop_single_step' : 'sequence_row',
             fileName: file.name,
             headers: parsed.headers,
@@ -855,7 +1371,13 @@ document.addEventListener('DOMContentLoaded', () => {
             columnName: parsed.headers[0] || ''
           };
           if (parsed.headers[0]) {
-            step.value = `{{${parsed.headers[0]}}}`;
+            if (step.type === 'condition') {
+              step.options = step.options || {};
+              step.options.ifSource = 'csv_or_var';
+              step.options.ifLeftValue = `{{${parsed.headers[0]}}}`;
+            } else {
+              step.value = `{{${parsed.headers[0]}}}`;
+            }
           }
           if (!proj.masterCsv || !proj.masterCsv.rows || proj.masterCsv.rows.length === 0) {
             proj.masterCsv = {
@@ -993,9 +1515,26 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================================
 
   function renderMasterCsvEditor(proj) {
+    const pts = proj.pageTableSource || {
+      enabled: false,
+      sourceType: 'table',
+      containerSelector: '',
+      rowSelector: 'tbody tr',
+      liveRefreshOnRun: true
+    };
+    const chkPageTableEnabled = document.getElementById('chk-page-table-enabled');
+    const chkPageTableLiveRefresh = document.getElementById('chk-page-table-live-refresh');
+    const inputPageTableContainer = document.getElementById('input-page-table-container');
+    const inputPageTableRow = document.getElementById('input-page-table-row');
+
+    if (chkPageTableEnabled) chkPageTableEnabled.checked = Boolean(pts.enabled);
+    if (chkPageTableLiveRefresh) chkPageTableLiveRefresh.checked = pts.liveRefreshOnRun !== false;
+    if (inputPageTableContainer) inputPageTableContainer.value = pts.containerSelector || '';
+    if (inputPageTableRow) inputPageTableRow.value = pts.rowSelector || '';
+
     const masterCsv = proj.masterCsv || { enabled: true, fileName: '', headers: [], rows: [] };
     chkMasterCsvEnabled.checked = masterCsv.enabled !== false;
-    masterCsvFilename.textContent = masterCsv.fileName ? `File: ${masterCsv.fileName}` : '';
+    masterCsvFilename.textContent = masterCsv.fileName ? `Source: ${masterCsv.fileName}` : '';
 
     rawMasterCsvTextarea.value = window.FlowTagCSV.objectsToCSV(masterCsv.rows || [], masterCsv.headers || []);
 
@@ -1153,6 +1692,78 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     saveCurrentProject();
     renderAll();
+  });
+
+  function ensureProjPageTableSource(proj) {
+    proj.pageTableSource = proj.pageTableSource || {
+      enabled: false,
+      sourceType: 'table',
+      containerSelector: '',
+      rowSelector: 'tbody tr',
+      liveRefreshOnRun: true,
+      headers: [],
+      sampleRowCount: 0
+    };
+    return proj.pageTableSource;
+  }
+
+  document.getElementById('chk-page-table-enabled')?.addEventListener('change', (e) => {
+    const proj = getCurrentProject();
+    if (!proj) return;
+    const pts = ensureProjPageTableSource(proj);
+    pts.enabled = e.target.checked;
+    saveCurrentProject();
+  });
+
+  document.getElementById('chk-page-table-live-refresh')?.addEventListener('change', (e) => {
+    const proj = getCurrentProject();
+    if (!proj) return;
+    const pts = ensureProjPageTableSource(proj);
+    pts.liveRefreshOnRun = e.target.checked;
+    saveCurrentProject();
+  });
+
+  document.getElementById('input-page-table-container')?.addEventListener('change', (e) => {
+    const proj = getCurrentProject();
+    if (!proj) return;
+    const pts = ensureProjPageTableSource(proj);
+    pts.containerSelector = e.target.value.trim();
+    if (pts.containerSelector) pts.enabled = true;
+    saveCurrentProject();
+    renderAll();
+  });
+
+  document.getElementById('input-page-table-row')?.addEventListener('change', (e) => {
+    const proj = getCurrentProject();
+    if (!proj) return;
+    const pts = ensureProjPageTableSource(proj);
+    pts.rowSelector = e.target.value.trim();
+    saveCurrentProject();
+  });
+
+  document.getElementById('btn-launch-pick-page-table')?.addEventListener('click', () => {
+    const proj = getCurrentProject();
+    if (!proj) return;
+    const domain = projDomainInput.value.trim() || proj.startUrl || 'https://example.com';
+    proj.startUrl = domain;
+    chrome.runtime.sendMessage(
+      {
+        type: 'LAUNCH_TAG_BUILDER',
+        projectId: proj.id,
+        targetUrl: domain,
+        addInitialGotoStep: proj.steps.length === 0,
+        startInPickMode: true
+      },
+      (res) => {
+        if (res && res.tabId) {
+          setTimeout(() => {
+            chrome.tabs.sendMessage(res.tabId, { type: 'START_TABLE_SOURCE_PICK' }, () => {
+              void chrome.runtime.lastError;
+            });
+          }, 900);
+        }
+      }
+    );
   });
 
   // ============================================================================
@@ -1415,9 +2026,39 @@ document.addEventListener('DOMContentLoaded', () => {
     return Array.from(colSet);
   }
 
+  function projectUsesPageTableInDash(proj) {
+    if (!proj) return false;
+    if (proj.pageTableSource && proj.pageTableSource.enabled && proj.pageTableSource.containerSelector) {
+      return true;
+    }
+    if (proj.masterCsv && proj.masterCsv.isPageTableSnapshot) {
+      return true;
+    }
+    for (const st of proj.steps || []) {
+      if (st.stepCsv && st.stepCsv.enabled && st.stepCsv.sourceType === 'page_table') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   btnRunWorkflow.addEventListener('click', () => {
     const proj = getCurrentProject();
     if (!proj) return;
+
+    // If this project uses a Page Table / HTML List data source on the webpage, do NOT ask for a CSV file—run directly!
+    if (projectUsesPageTableInDash(proj)) {
+      switchTab('results');
+      chrome.runtime.sendMessage({
+        type: 'START_WORKFLOW_RUN',
+        projectId: proj.id,
+        reuseBuilderTab: Boolean(builderSession && builderSession.active && builderSession.projectId === proj.id),
+        startRow: 1,
+        maxRows: 0,
+        runtimeCsv: null
+      });
+      return;
+    }
 
     modalRuntimeCsv = null;
     if (runModalCsvFile) runModalCsvFile.value = '';
@@ -1779,6 +2420,13 @@ document.addEventListener('DOMContentLoaded', () => {
         description: proj.description || '',
         startUrl: proj.startUrl || '',
         pausedStepsNote: 'Set step.paused = true on any step to temporarily skip it during test runs.',
+        pageTableSource: proj.pageTableSource || {
+          enabled: false,
+          sourceType: 'table',
+          containerSelector: '',
+          rowSelector: 'tbody tr',
+          liveRefreshOnRun: true
+        },
         masterCsv: {
           enabled: Boolean(proj.masterCsv?.enabled),
           fileName: proj.masterCsv?.fileName || '',
@@ -1877,6 +2525,13 @@ document.addEventListener('DOMContentLoaded', () => {
       startUrl: srcProj.startUrl || existingProj?.startUrl || 'https://example.com',
       createdAt: existingProj?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      pageTableSource: srcProj.pageTableSource || existingProj?.pageTableSource || {
+        enabled: false,
+        sourceType: 'table',
+        containerSelector: '',
+        rowSelector: 'tbody tr',
+        liveRefreshOnRun: true
+      },
       masterCsv: mergedMasterCsv,
       steps: normalizedSteps,
       lastRunResults: existingProj?.lastRunResults || [],
