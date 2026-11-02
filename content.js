@@ -1848,6 +1848,7 @@
         if (['click', 'input', 'select', 'extract', 'keypress'].includes(bMode)) {
           const bSel = act.resolvedSelector || act.selector || selector;
           const bVal = act.resolvedValue !== undefined ? act.resolvedValue : (act.value || '');
+          const isActRowRel = Boolean(act.isRowRelative && !bSel.startsWith('#'));
           const res = await executeDomStep({
             id: `${step.id}_branch_${idxSuffix}`,
             type: bMode,
@@ -1855,8 +1856,8 @@
             resolvedSelector: bSel,
             value: bVal,
             resolvedValue: bVal,
-            resolvedRowAnchor: rowAnchor,
-            pageTableConfig: step.pageTableConfig || null,
+            resolvedRowAnchor: isActRowRel ? rowAnchor : '',
+            pageTableConfig: isActRowRel ? (step.pageTableConfig || null) : null,
             options: {
               clearFirst: true,
               pressEnter: Boolean(act.pressEnter),
@@ -2148,7 +2149,12 @@
 
       for (const sel of candidateSelectors) {
         try {
-          const el = queryRoot.querySelector(sel);
+          let el = queryRoot.querySelector(sel);
+          // If queryRoot was scoped to rowContainer or nthRowEl, but the element is in a floating
+          // popup modal, popover, or overlay rendered outside that row: fall back to document!
+          if (!el && queryRoot !== document) {
+            el = document.querySelector(sel);
+          }
           if (el) {
             // If we are scoped to nthRowEl of a Page Table, do NOT accidentally return an element from a DIFFERENT row of the same table!
             // (Elements outside the table—such as a modal dialog or page button—are allowed.)

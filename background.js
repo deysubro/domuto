@@ -968,6 +968,7 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
                 } else {
                   const nSel = FlowTagCSV.interpolateValue(branch.selector || step.selector || '', interpCtx);
                   await ensureContentScriptInjected(targetTab.id);
+                  const isNestedRowRel = Boolean(branch.isRowRelative && !nSel.startsWith('#'));
                   const nCheck = await sendMessageToTabSafe(targetTab.id, {
                     type: 'EXECUTE_DOM_STEP',
                     step: {
@@ -977,8 +978,8 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
                       resolvedSelector: nSel,
                       value: nExpected,
                       resolvedValue: nExpected,
-                      resolvedRowAnchor,
-                      pageTableConfig: activePageTableConfig,
+                      resolvedRowAnchor: isNestedRowRel ? resolvedRowAnchor : '',
+                      pageTableConfig: isNestedRowRel ? activePageTableConfig : null,
                       options: {
                         ifSource: 'dom_element',
                         verifyCondition: nCondOp,
@@ -1012,6 +1013,7 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
                 const branchSelector = FlowTagCSV.interpolateValue(branchRawSel, interpCtx);
                 const branchValue = FlowTagCSV.interpolateValue(branch.value || '', interpCtx);
                 await ensureContentScriptInjected(targetTab.id);
+                const isBranchRowRel = Boolean(branch.isRowRelative && !branchSelector.startsWith('#'));
                 const branchExec = await sendMessageToTabSafe(targetTab.id, {
                   type: 'EXECUTE_DOM_STEP',
                   step: {
@@ -1022,8 +1024,8 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
                     resolvedSelector: branchSelector,
                     value: branchValue,
                     resolvedValue: branchValue,
-                    resolvedRowAnchor,
-                    pageTableConfig: activePageTableConfig,
+                    resolvedRowAnchor: isBranchRowRel ? resolvedRowAnchor : '',
+                    pageTableConfig: isBranchRowRel ? activePageTableConfig : null,
                     options: {
                       clearFirst: true,
                       pressEnter: Boolean(branch.pressEnter),
