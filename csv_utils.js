@@ -276,6 +276,18 @@
     return d;
   }
 
+  function findInRowFuzzy(rowObj, searchKey) {
+    if (!rowObj || typeof rowObj !== 'object') return undefined;
+    if (rowObj[searchKey] !== undefined) return rowObj[searchKey];
+    const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const target = norm(searchKey);
+    if (!target) return undefined;
+    for (const k of Object.keys(rowObj)) {
+      if (norm(k) === target) return rowObj[k];
+    }
+    return undefined;
+  }
+
   function resolveSingleToken(token, context = {}) {
     const key = String(token || '').replace(/^\{\{\s*|\s*\}\}$/g, '').trim();
     const {
@@ -291,31 +303,37 @@
 
     if (key.startsWith('prev.')) {
       const prevKey = key.slice(5);
-      if (extractedVars && extractedVars[prevKey] !== undefined) {
-        return String(extractedVars[prevKey]);
-      }
-      return '';
+      const val = findInRowFuzzy(extractedVars, prevKey);
+      return val !== undefined ? String(val) : '';
     }
     if (key.startsWith('step.')) {
       const col = key.slice(5);
-      if (stepRow && stepRow[col] !== undefined) return String(stepRow[col]);
-      if (masterRow && masterRow[col] !== undefined) return String(masterRow[col]);
+      const valStep = findInRowFuzzy(stepRow, col);
+      if (valStep !== undefined) return String(valStep);
+      const valMaster = findInRowFuzzy(masterRow, col);
+      if (valMaster !== undefined) return String(valMaster);
       return '';
     }
     if (key.startsWith('master.')) {
       const col = key.slice(7);
-      if (masterRow && masterRow[col] !== undefined) return String(masterRow[col]);
-      if (stepRow && stepRow[col] !== undefined) return String(stepRow[col]);
+      const valMaster = findInRowFuzzy(masterRow, col);
+      if (valMaster !== undefined) return String(valMaster);
+      const valStep = findInRowFuzzy(stepRow, col);
+      if (valStep !== undefined) return String(valStep);
       return '';
     }
     if (key.startsWith('var.')) {
       const varName = key.slice(4);
-      return extractedVars && extractedVars[varName] !== undefined ? String(extractedVars[varName]) : '';
+      const val = findInRowFuzzy(extractedVars, varName);
+      return val !== undefined ? String(val) : '';
     }
 
-    if (stepRow && stepRow[key] !== undefined) return String(stepRow[key]);
-    if (masterRow && masterRow[key] !== undefined) return String(masterRow[key]);
-    if (extractedVars && extractedVars[key] !== undefined) return String(extractedVars[key]);
+    const valStep = findInRowFuzzy(stepRow, key);
+    if (valStep !== undefined) return String(valStep);
+    const valMaster = findInRowFuzzy(masterRow, key);
+    if (valMaster !== undefined) return String(valMaster);
+    const valExt = findInRowFuzzy(extractedVars, key);
+    if (valExt !== undefined) return String(valExt);
 
     return token;
   }

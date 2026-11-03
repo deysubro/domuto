@@ -2161,6 +2161,15 @@
             if (tableContainerEl && nthRowEl && tableContainerEl.contains(el) && !nthRowEl.contains(el)) {
               continue;
             }
+
+            // If the element is hidden (e.g. inside a modal/popover that is still opening or fading in),
+            // wait briefly for the transition to finish before returning it!
+            const style = window.getComputedStyle(el);
+            const isHidden = style.display === 'none' || style.visibility === 'hidden';
+            if (isHidden && Date.now() - start < timeoutMs - 600) {
+              continue;
+            }
+
             return { element: el, matchedSelector: sel };
           }
         } catch (_) {
@@ -2191,8 +2200,26 @@
    * execute reliably!
    */
   function simulateRealisticInput(el, text, clearFirst = true) {
-    if (el.focus) el.focus();
-    const finalVal = clearFirst ? String(text ?? '') : String(el.value || '') + String(text ?? '');
+    if (el.focus) {
+      try { el.focus(); } catch (_) {}
+    }
+    try {
+      el.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+      el.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+    } catch (_) {}
+
+    const wasReadOnly = Boolean(el.readOnly);
+    if (wasReadOnly) {
+      try { el.readOnly = false; } catch (_) {}
+    }
+
+    let finalVal = clearFirst ? String(text ?? '') : String(el.value || '') + String(text ?? '');
+
+    // If native HTML5 date input, convert MM-DD-YYYY or MM/DD/YYYY to YYYY-MM-DD standard format
+    if (el.type === 'date' && /^\d{2}[-\/]\d{2}[-\/]\d{4}$/.test(finalVal.trim())) {
+      const parts = finalVal.trim().split(/[-\/]/);
+      finalVal = `${parts[2]}-${parts[0]}-${parts[1]}`;
+    }
 
     const lastChar = finalVal.slice(-1) || '0';
     const charCode = lastChar.charCodeAt(0) || 48;
@@ -2208,6 +2235,10 @@
     el.dispatchEvent(new KeyboardEvent('keydown', keyInit));
     el.dispatchEvent(new KeyboardEvent('keypress', keyInit));
 
+    try {
+      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: finalVal, inputType: 'insertText' }));
+    } catch (_) {}
+
     // React / Vue / Angular compatible native value setter
     const proto =
       el.tagName === 'TEXTAREA'
@@ -2221,10 +2252,53 @@
       el.value = finalVal;
     }
 
-    el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    try {
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: finalVal, inputType: 'insertText' }));
+    } catch (_) {
+      el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    }
+
     // Critical for inline onkeyup="javascript:updateDependentField(...)" handlers:
     el.dispatchEvent(new KeyboardEvent('keyup', keyInit));
     el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+
+    // Custom events for Bootstrap / jQuery UI / Kendo datepickers
+    try {
+      el.dispatchEvent(new CustomEvent('changeDate', { bubbles: true, detail: { date: finalVal } }));
+      el.dispatchEvent(new CustomEvent('dp.change', { bubbles: true, detail: { date: finalVal } }));
+    } catch (_) {}
+
+    // Page-context bridge for jQuery datepicker if attached
+    try {
+      const script = document.createElement('script');
+      script.textContent = `(function() {
+        try {
+          var target = document.getElementById(${JSON.stringify(el.id)}) || (window.jQuery && window.jQuery(${JSON.stringify('#' + (el.id || ''))})[0]);
+          if (target && window.jQuery) {
+            var $t = window.jQuery(target);
+            if (typeof $t.datepicker === 'function') {
+              try { $t.datepicker('setDate', ${JSON.stringify(finalVal)}); } catch(e) {}
+            }
+            $t.val(${JSON.stringify(finalVal)}).trigger('input').trigger('change');
+          }
+        } catch (err) {}
+      })();`;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
+    } catch (_) {}
+
+    // Crucial: Fire blur so validation and datepicker plugins commit the value!
+    try {
+      el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+      el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    } catch (_) {}
+    if (el.blur) {
+      try { el.blur(); } catch (_) {}
+    }
+
+    if (wasReadOnly) {
+      try { el.readOnly = true; } catch (_) {}
+    }
   }
 
   function simulateKeyPress(el, key) {

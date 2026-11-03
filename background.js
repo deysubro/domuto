@@ -1044,8 +1044,15 @@ async function executeProjectWorkflow({ projectId, maxRows = 0, startRow = 1, re
                     rowResult[outCol] = branchExec.extractedValue ?? '';
                     extractedVars[outCol] = branchExec.extractedValue ?? '';
                   }
-                  await appendRunLog('success', `✓ ${actionLabel} (${branchMode}) completed.`);
-                  await sleep(350);
+                  const detailStr =
+                    branchMode === 'input'
+                      ? `: Typed "${branchValue}" into ${branchSelector}`
+                      : branchMode === 'click'
+                      ? `: Clicked ${branchSelector}`
+                      : '';
+                  await appendRunLog('success', `✓ ${actionLabel} (${branchMode}) completed${detailStr}.`);
+                  const settleMs = branchMode === 'click' ? 650 : branchMode === 'input' ? 500 : 350;
+                  await sleep(settleMs);
                 } else if (branchExec && !branchExec.ok) {
                   await appendRunLog('error', `✗ ${actionLabel} (${branchMode}) error: ${branchExec.error}`);
                   rowErrors.push(`Step ${sIdx + 1} ${actionLabel} (${branchMode}): ${branchExec.error}`);

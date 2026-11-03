@@ -2,6 +2,22 @@
 
 All notable changes to **Domuto | Visual Browser Automation** will be documented in this file.
 
+## [1.1.1] - 2026-11-02
+
+### Fixed
+- **Modal & Datepicker Input Reliability**:
+  - Added complete browser event lifecycle simulation (`focus`, `focusin`, `beforeinput`, `input`, `keyup`, `change`, `changeDate`, `dp.change`, `blur`, `focusout`) to guarantee datepicker widgets (Bootstrap Datepicker, jQuery UI, Flatpickr, Kendo) parse and commit typed values.
+  - Added page-context bridge that automatically calls `$(el).datepicker('setDate', ...)` and triggers jQuery events when jQuery datepicker plugins are active on the page.
+  - Added temporary bypass for `readonly` attributes on date inputs so values can be set without being rejected by input masks.
+  - Added automatic date format normalization for native HTML5 `<input type="date">` (`MM-DD-YYYY` / `MM/DD/YYYY` $\rightarrow$ `YYYY-MM-DD`).
+- **Fuzzy & Space-Tolerant Column Resolution**:
+  - Enhanced `FlowTagCSV.interpolateValue` and `evaluateMathOrDateExpression` with fuzzy token matching, seamlessly resolving column names across spaces, underscores, casing, and punctuation differences (e.g. `{{PO_Submitted_Date}}` vs `{{PO Submitted Date}}`).
+- **Modal Visibility & Transition Settle**:
+  - `waitForElementSmart` now verifies that target elements inside modals and popups are rendered and visible (not hidden or still transitioning) before interacting.
+  - Increased post-click settle delay from 350ms to 650ms to provide ample time for AJAX modals and popovers to open and stabilize.
+- **Execution Log Transparency**:
+  - Chained action execution logs now explicitly display the value typed and target selector (e.g. `✓ THEN #2 (input) completed: Typed "11-03-2026" into #PurchaseOrderShipDate`).
+
 ## [1.1.0] - 2026-10-30
 
 ### Added
