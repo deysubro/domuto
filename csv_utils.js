@@ -224,6 +224,113 @@
     return null;
   }
 
+  function getTodayFormatted() {
+    const now = new Date();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${m}-${d}-${now.getFullYear()}`;
+  }
+
+  /**
+   * Extracts and parses a date from almost any format or surrounding text.
+   * Returns { date, key, formatted } where `key` is YYYYMMDD integer for timezone-safe comparison,
+   * or null if no valid date is found.
+   */
+  function extractAndParseDate(str) {
+    if (str === undefined || str === null) return null;
+    const s = String(str).trim();
+    if (!s) return null;
+
+    const makeResult = (y, mIdx, d) => {
+      if (mIdx < 0 || mIdx > 11 || d < 1 || d > 31 || y < 1900 || y > 2200) return null;
+      const dt = new Date(y, mIdx, d);
+      if (isNaN(dt.getTime()) || dt.getFullYear() !== y || dt.getMonth() !== mIdx || dt.getDate() !== d) {
+        return null;
+      }
+      const mm = String(mIdx + 1).padStart(2, '0');
+      const dd = String(d).padStart(2, '0');
+      return {
+        date: dt,
+        key: y * 10000 + (mIdx + 1) * 100 + d,
+        formatted: `${mm}-${dd}-${y}`
+      };
+    };
+
+    // 1. ISO prefix (YYYY-MM-DD...) - extract calendar date directly to avoid UTC offset shifts
+    let m = s.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+    if (m) {
+      const res = makeResult(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+      if (res) return res;
+    }
+
+    // 2. Exact formats via parseDateWithFormat
+    const exact = parseDateWithFormat(s);
+    if (exact && exact.date && !isNaN(exact.date.getTime())) {
+      const res = makeResult(exact.date.getFullYear(), exact.date.getMonth(), exact.date.getDate());
+      if (res) return res;
+    }
+
+    // 3. Embedded MM-DD-YYYY, MM/DD/YYYY, MM.DD.YYYY (or DD-MM-YYYY when first > 12)
+    m = s.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})\b/);
+    if (m) {
+      let p1 = parseInt(m[1], 10);
+      let p2 = parseInt(m[2], 10);
+      const y = parseInt(m[3], 10);
+      let mon = p1;
+      let day = p2;
+      if (p1 > 12 && p2 <= 12) {
+        day = p1;
+        mon = p2;
+      }
+      const res = makeResult(y, mon - 1, day);
+      if (res) return res;
+    }
+
+    // 4. 2-digit year: MM/DD/YY or MM-DD-YY or MM.DD.YY
+    m = s.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})\b/);
+    if (m) {
+      let p1 = parseInt(m[1], 10);
+      let p2 = parseInt(m[2], 10);
+      const yy = parseInt(m[3], 10);
+      const y = yy < 70 ? 2000 + yy : 1900 + yy;
+      let mon = p1;
+      let day = p2;
+      if (p1 > 12 && p2 <= 12) {
+        day = p1;
+        mon = p2;
+      }
+      const res = makeResult(y, mon - 1, day);
+      if (res) return res;
+    }
+
+    // 5. Month names: "Nov 16, 2026", "November 16 2026", "16 Nov 2026", "16-Nov-2026"
+    const SHORT_MON = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+    const matchMonIdx = (tok) => {
+      const low = tok.toLowerCase().slice(0, 3);
+      return SHORT_MON.indexOf(low);
+    };
+
+    m = s.match(/\b([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\b/);
+    if (m) {
+      const monIdx = matchMonIdx(m[1]);
+      if (monIdx >= 0) {
+        const res = makeResult(parseInt(m[3], 10), monIdx, parseInt(m[2], 10));
+        if (res) return res;
+      }
+    }
+
+    m = s.match(/\b(\d{1,2})(?:st|nd|rd|th)?[- ]([A-Za-z]{3,9})[- ,]+(\d{4})\b/);
+    if (m) {
+      const monIdx = matchMonIdx(m[2]);
+      if (monIdx >= 0) {
+        const res = makeResult(parseInt(m[3], 10), monIdx, parseInt(m[1], 10));
+        if (res) return res;
+      }
+    }
+
+    return null;
+  }
+
   function formatDateLike(date, formatInfo) {
     if (!formatInfo) {
       const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -300,6 +407,7 @@
 
     if (key === 'row_index') return String(masterRowIndex + 1);
     if (key === 'step_row_index') return String(stepRowIndex + 1);
+    if (key.toLowerCase() === 'today') return getTodayFormatted();
 
     if (key.startsWith('prev.')) {
       const prevKey = key.slice(5);
@@ -480,6 +588,30 @@
       return match ? parseFloat(match[0]) : NaN;
     };
 
+    // Helper for date-aware comparisons (e.g. {{ESD}} < {{today}}) regardless of date formatting
+    const compareDatesIfApplicable = (opSym) => {
+      const eDate = extractAndParseDate(expectedStr);
+      if (!eDate) return null;
+      const aDate = extractAndParseDate(actualStr);
+      if (!aDate) {
+        return {
+          passed: false,
+          reason: `Expected date ${opSym} ${eDate.formatted}, found "${actualStr.slice(0, 60)}" (not a date)`
+        };
+      }
+      let ok = false;
+      if (opSym === '>') ok = aDate.key > eDate.key;
+      else if (opSym === '>=') ok = aDate.key >= eDate.key;
+      else if (opSym === '<') ok = aDate.key < eDate.key;
+      else if (opSym === '<=') ok = aDate.key <= eDate.key;
+      return {
+        passed: ok,
+        reason: ok
+          ? `Date ${aDate.formatted} ${opSym} ${eDate.formatted}`
+          : `Expected date ${opSym} ${eDate.formatted}, found ${aDate.formatted}`
+      };
+    };
+
     let passed = false;
     let reason = '';
 
@@ -498,19 +630,39 @@
           : `Expected "${actualStr.slice(0, 60)}" NOT to contain "${expectedStr}"`;
         break;
 
-      case 'equals':
-        passed = normActual === normExpected;
-        reason = passed
-          ? `Equals "${expectedStr}"`
-          : `Expected "${actualStr.slice(0, 60)}" to equal "${expectedStr}"`;
+      case 'equals': {
+        const aDate = extractAndParseDate(actualStr);
+        const eDate = extractAndParseDate(expectedStr);
+        if (aDate && eDate) {
+          passed = aDate.key === eDate.key;
+          reason = passed
+            ? `Date ${aDate.formatted} == ${eDate.formatted}`
+            : `Expected date ${eDate.formatted}, found ${aDate.formatted}`;
+        } else {
+          passed = normActual === normExpected;
+          reason = passed
+            ? `Equals "${expectedStr}"`
+            : `Expected "${actualStr.slice(0, 60)}" to equal "${expectedStr}"`;
+        }
         break;
+      }
 
-      case 'not_equals':
-        passed = normActual !== normExpected;
-        reason = passed
-          ? `Does not equal "${expectedStr}"`
-          : `Expected "${actualStr.slice(0, 60)}" NOT to equal "${expectedStr}"`;
+      case 'not_equals': {
+        const aDate = extractAndParseDate(actualStr);
+        const eDate = extractAndParseDate(expectedStr);
+        if (aDate && eDate) {
+          passed = aDate.key !== eDate.key;
+          reason = passed
+            ? `Date ${aDate.formatted} != ${eDate.formatted}`
+            : `Expected date NOT to equal ${eDate.formatted}, found ${aDate.formatted}`;
+        } else {
+          passed = normActual !== normExpected;
+          reason = passed
+            ? `Does not equal "${expectedStr}"`
+            : `Expected "${actualStr.slice(0, 60)}" NOT to equal "${expectedStr}"`;
+        }
         break;
+      }
 
       case 'starts_with':
         passed = normActual.startsWith(normExpected);
@@ -561,34 +713,58 @@
       }
 
       case 'gt': {
-        const aNum = extractNum(actualStr);
-        const eNum = parseFloat(expectedStr.replace(/,/g, ''));
-        passed = !Number.isNaN(aNum) && !Number.isNaN(eNum) && aNum > eNum;
-        reason = passed ? `${aNum} > ${eNum}` : `Expected > ${eNum}, found "${actualStr.slice(0, 60)}" (${aNum})`;
+        const dCmp = compareDatesIfApplicable('>');
+        if (dCmp) {
+          passed = dCmp.passed;
+          reason = dCmp.reason;
+        } else {
+          const aNum = extractNum(actualStr);
+          const eNum = parseFloat(expectedStr.replace(/,/g, ''));
+          passed = !Number.isNaN(aNum) && !Number.isNaN(eNum) && aNum > eNum;
+          reason = passed ? `${aNum} > ${eNum}` : `Expected > ${eNum}, found "${actualStr.slice(0, 60)}" (${aNum})`;
+        }
         break;
       }
 
       case 'gte': {
-        const aNum = extractNum(actualStr);
-        const eNum = parseFloat(expectedStr.replace(/,/g, ''));
-        passed = !Number.isNaN(aNum) && !Number.isNaN(eNum) && aNum >= eNum;
-        reason = passed ? `${aNum} >= ${eNum}` : `Expected >= ${eNum}, found "${actualStr.slice(0, 60)}" (${aNum})`;
+        const dCmp = compareDatesIfApplicable('>=');
+        if (dCmp) {
+          passed = dCmp.passed;
+          reason = dCmp.reason;
+        } else {
+          const aNum = extractNum(actualStr);
+          const eNum = parseFloat(expectedStr.replace(/,/g, ''));
+          passed = !Number.isNaN(aNum) && !Number.isNaN(eNum) && aNum >= eNum;
+          reason = passed ? `${aNum} >= ${eNum}` : `Expected >= ${eNum}, found "${actualStr.slice(0, 60)}" (${aNum})`;
+        }
         break;
       }
 
       case 'lt': {
-        const aNum = extractNum(actualStr);
-        const eNum = parseFloat(expectedStr.replace(/,/g, ''));
-        passed = !Number.isNaN(aNum) && !Number.isNaN(eNum) && aNum < eNum;
-        reason = passed ? `${aNum} < ${eNum}` : `Expected < ${eNum}, found "${actualStr.slice(0, 60)}" (${aNum})`;
+        const dCmp = compareDatesIfApplicable('<');
+        if (dCmp) {
+          passed = dCmp.passed;
+          reason = dCmp.reason;
+        } else {
+          const aNum = extractNum(actualStr);
+          const eNum = parseFloat(expectedStr.replace(/,/g, ''));
+          passed = !Number.isNaN(aNum) && !Number.isNaN(eNum) && aNum < eNum;
+          reason = passed ? `${aNum} < ${eNum}` : `Expected < ${eNum}, found "${actualStr.slice(0, 60)}" (${aNum})`;
+        }
         break;
       }
 
       case 'lte': {
-        const aNum = extractNum(actualStr);
-        const eNum = parseFloat(expectedStr.replace(/,/g, ''));
-        passed = !Number.isNaN(aNum) && !Number.isNaN(eNum) && aNum <= eNum;
-        reason = passed ? `${aNum} <= ${eNum}` : `Expected <= ${eNum}, found "${actualStr.slice(0, 60)}" (${aNum})`;
+        const dCmp = compareDatesIfApplicable('<=');
+        if (dCmp) {
+          passed = dCmp.passed;
+          reason = dCmp.reason;
+        } else {
+          const aNum = extractNum(actualStr);
+          const eNum = parseFloat(expectedStr.replace(/,/g, ''));
+          passed = !Number.isNaN(aNum) && !Number.isNaN(eNum) && aNum <= eNum;
+          reason = passed ? `${aNum} <= ${eNum}` : `Expected <= ${eNum}, found "${actualStr.slice(0, 60)}" (${aNum})`;
+        }
         break;
       }
 
@@ -640,6 +816,8 @@
     evaluateVerification,
     evaluateMathOrDateExpression,
     parseDateWithFormat,
+    extractAndParseDate,
+    getTodayFormatted,
     formatDateLike,
     addCalendarDays,
     addBusinessDays

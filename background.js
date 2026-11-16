@@ -197,6 +197,35 @@ async function handleMessage(message, sender) {
       return { ok: true, project: updatedProject };
     }
 
+    case 'SYNC_MAIN_WORLD_INPUT': {
+      const tabId = sender?.tab?.id;
+      const sel = message.selector;
+      const val = message.value;
+      if (tabId && sel) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: (targetSel, targetVal) => {
+              try {
+                const el = document.querySelector(targetSel);
+                if (!el) return;
+                if (window.jQuery) {
+                  const $t = window.jQuery(el);
+                  if (typeof $t.datepicker === 'function') {
+                    try { $t.datepicker('setDate', targetVal); } catch (_) {}
+                  }
+                  $t.val(targetVal).trigger('input').trigger('change').trigger('blur');
+                }
+              } catch (_) {}
+            },
+            args: [sel, val]
+          });
+        } catch (_) {}
+      }
+      return { ok: true };
+    }
+
     case 'LAUNCH_TAG_BUILDER': {
       // Opens or attaches to target URL and activates the Tag-Assistant floating HUD
       const { projectId, targetUrl, addInitialGotoStep } = message;

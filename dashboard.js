@@ -191,8 +191,46 @@ document.addEventListener('DOMContentLoaded', () => {
   // TAB 1: WORKFLOW STEPS SEQUENCER
   // ============================================================================
 
-  function generateFormulaSuggestions(columns = [], query = '') {
-    const list = [];
+  function generateFormulaSuggestions(columns = [], query = '', triggerMode = 'paren') {
+    const isBrace = triggerMode === 'brace';
+    const list = [
+      {
+        formula: '{{today}}',
+        label: "Today's Date (auto-compared)",
+        tag: '📅 Fn',
+        priority: isBrace ? 20 : 11
+      },
+      {
+        formula: '({{today}} + next business day)',
+        label: 'Today + Next Business Day',
+        tag: '📅 Date',
+        priority: isBrace ? 14 : 12
+      },
+      {
+        formula: '({{today}} + 1 day)',
+        label: 'Tomorrow (+1 day)',
+        tag: '📅 Date',
+        priority: isBrace ? 13 : 10
+      },
+      {
+        formula: '({{today}} - 1 day)',
+        label: 'Yesterday (-1 day)',
+        tag: '📅 Date',
+        priority: isBrace ? 12 : 9
+      },
+      {
+        formula: '({{today}} + 3 business days)',
+        label: 'Today + 3 Business Days',
+        tag: '📅 Date',
+        priority: isBrace ? 11 : 8
+      },
+      {
+        formula: '{{row_index}}',
+        label: 'Current Row # (1, 2, 3...)',
+        tag: '🔢 Fn',
+        priority: isBrace ? 15 : 4
+      }
+    ];
     const qLower = query.toLowerCase().trim();
 
     for (const col of columns) {
@@ -201,6 +239,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const isNum = /qty|quantity|price|amount|total|cost|rate|num|count/i.test(col);
 
       const formulas = [
+        {
+          formula: `{{${col}}}`,
+          label: 'Column / Variable',
+          tag: '📄 Col',
+          priority: isBrace ? 18 : 1
+        },
         {
           formula: `({{${col}}} + next business day)`,
           label: 'Next Business Day',
@@ -289,29 +333,54 @@ document.addEventListener('DOMContentLoaded', () => {
       currentMatches = [];
     };
 
-    const updateMenu = () => {
+    const getTriggerContext = () => {
       const val = inputEl.value || '';
       const cursor = inputEl.selectionStart ?? val.length;
       const textBefore = val.slice(0, cursor);
-      const openIdx = textBefore.lastIndexOf('(');
+      const textAfter = val.slice(cursor);
 
-      if (openIdx === -1) {
+      const openParen = textBefore.lastIndexOf('(');
+      const parenValid = openParen !== -1 && !textBefore.slice(openParen + 1).includes(')');
+
+      const openBrace = textBefore.lastIndexOf('{{');
+      const braceValid = openBrace !== -1 && !textBefore.slice(openBrace + 2).includes('}}');
+
+      if (parenValid && (!braceValid || openParen < openBrace)) {
+        return {
+          mode: 'paren',
+          startIdx: openParen,
+          closeToken: ')',
+          rawQuery: textBefore
+            .slice(openParen + 1)
+            .replace(/^\{\{\s*|\s*\}\}$/g, '')
+            .replace(/^[+*\-\/]\s*/, '')
+            .trim(),
+          textBefore,
+          textAfter
+        };
+      }
+      if (braceValid) {
+        return {
+          mode: 'brace',
+          startIdx: openBrace,
+          closeToken: '}}',
+          rawQuery: textBefore.slice(openBrace + 2).trim(),
+          textBefore,
+          textAfter
+        };
+      }
+      return null;
+    };
+
+    const updateMenu = () => {
+      const ctx = getTriggerContext();
+      if (!ctx) {
         hideMenu();
         return;
       }
 
-      const textBetween = textBefore.slice(openIdx + 1);
-      if (textBetween.includes(')')) {
-        hideMenu();
-        return;
-      }
-
-      const rawQuery = textBetween
-        .replace(/^\{\{\s*|\s*\}\}$/g, '')
-        .replace(/^[+*\-\/]\s*/, '')
-        .trim();
       const cols = getColumnsFn();
-      const suggestions = generateFormulaSuggestions(cols, rawQuery);
+      const suggestions = generateFormulaSuggestions(cols, ctx.rawQuery, ctx.mode);
 
       if (!suggestions || suggestions.length === 0) {
         hideMenu();
@@ -323,7 +392,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       menuEl.innerHTML = `
         <div class="dash-autocomplete-header">
-          <span>🧮 FORMULA AUTOCOMPLETE</span>
+          <span>${ctx.mode === 'brace' ? '⚡ FUNCTIONS & COLUMNS' : '🧮 FORMULA AUTOCOMPLETE'}</span>
           <span style="font-size:9px;color:#94a3b8;">↑↓ to navigate, Enter to pick</span>
         </div>
         ${currentMatches
@@ -356,15 +425,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectItem = (idx) => {
       const chosen = currentMatches[idx];
       if (!chosen) return;
-      const val = inputEl.value || '';
-      const cursor = inputEl.selectionStart ?? val.length;
-      const textBefore = val.slice(0, cursor);
-      const textAfter = val.slice(cursor);
-      const openIdx = textBefore.lastIndexOf('(');
+      const ctx = getTriggerContext();
+      if (!ctx) return;
 
-      const closeIdx = textAfter.indexOf(')');
-      const remainderAfter = closeIdx !== -1 ? textAfter.slice(closeIdx + 1) : textAfter;
-      const remainderBefore = openIdx !== -1 ? textBefore.slice(0, openIdx) : textBefore;
+      const closeIdx = ctx.textAfter.indexOf(ctx.closeToken);
+      const remainderAfter = closeIdx !== -1 ? ctx.textAfter.slice(closeIdx + ctx.closeToken.length) : ctx.textAfter;
+      const remainderBefore = ctx.startIdx !== -1 ? ctx.textBefore.slice(0, ctx.startIdx) : ctx.textBefore;
 
       const newVal = remainderBefore + chosen.formula + remainderAfter;
       inputEl.value = newVal;
@@ -902,9 +968,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
               </div>
               ${
-                masterHeaders.length > 0 || stepHeaders.length > 0 || prevSteps.length > 0
+                masterHeaders.length > 0 || stepHeaders.length > 0 || prevSteps.length > 0 || step.type === 'condition' || step.type === 'verify' || step.type === 'input'
                   ? `<div class="token-bar">
                       <span style="font-size:10.5px;color:#94a3b8;align-self:center;">Insert Variable:</span>
+                      <span class="token-pill formula-token" data-insert-token="{{today}}" title="Today's date (auto-parses and compares any date format)">📅 {{today}}</span>
                       ${masterHeaders
                         .map((h) => `<span class="token-pill" data-insert-token="{{${escapeHtml(h)}}}">+ {{${escapeHtml(h)}}}</span>`)
                         .join('')}

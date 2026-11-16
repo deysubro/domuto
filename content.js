@@ -1957,6 +1957,22 @@
 
       case 'input': {
         simulateRealisticInput(el, value, Boolean(options.clearFirst !== false));
+        const syncSelector = el.id ? `#${CSS.escape(el.id)}` : (lookup.matchedSelector || selector);
+        if (syncSelector) {
+          await new Promise((resolve) => {
+            chrome.runtime.sendMessage(
+              {
+                type: 'SYNC_MAIN_WORLD_INPUT',
+                selector: syncSelector,
+                value: el.value
+              },
+              () => {
+                void chrome.runtime.lastError;
+                resolve();
+              }
+            );
+          });
+        }
         if (options.pressEnter) {
           await new Promise((r) => setTimeout(r, 150));
           simulateKeyPress(el, 'Enter');
@@ -2268,25 +2284,6 @@
       el.dispatchEvent(new CustomEvent('dp.change', { bubbles: true, detail: { date: finalVal } }));
     } catch (_) {}
 
-    // Page-context bridge for jQuery datepicker if attached
-    try {
-      const script = document.createElement('script');
-      script.textContent = `(function() {
-        try {
-          var target = document.getElementById(${JSON.stringify(el.id)}) || (window.jQuery && window.jQuery(${JSON.stringify('#' + (el.id || ''))})[0]);
-          if (target && window.jQuery) {
-            var $t = window.jQuery(target);
-            if (typeof $t.datepicker === 'function') {
-              try { $t.datepicker('setDate', ${JSON.stringify(finalVal)}); } catch(e) {}
-            }
-            $t.val(${JSON.stringify(finalVal)}).trigger('input').trigger('change');
-          }
-        } catch (err) {}
-      })();`;
-      (document.head || document.documentElement).appendChild(script);
-      script.remove();
-    } catch (_) {}
-
     // Crucial: Fire blur so validation and datepicker plugins commit the value!
     try {
       el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
@@ -2452,8 +2449,46 @@
     return Array.from(colSet);
   }
 
-  function generateFormulaSuggestions(columns = [], query = '') {
-    const list = [];
+  function generateFormulaSuggestions(columns = [], query = '', triggerMode = 'paren') {
+    const isBrace = triggerMode === 'brace';
+    const list = [
+      {
+        formula: '{{today}}',
+        label: "Today's Date (auto-compared)",
+        tag: '📅 Fn',
+        priority: isBrace ? 20 : 11
+      },
+      {
+        formula: '({{today}} + next business day)',
+        label: 'Today + Next Business Day',
+        tag: '📅 Date',
+        priority: isBrace ? 14 : 12
+      },
+      {
+        formula: '({{today}} + 1 day)',
+        label: 'Tomorrow (+1 day)',
+        tag: '📅 Date',
+        priority: isBrace ? 13 : 10
+      },
+      {
+        formula: '({{today}} - 1 day)',
+        label: 'Yesterday (-1 day)',
+        tag: '📅 Date',
+        priority: isBrace ? 12 : 9
+      },
+      {
+        formula: '({{today}} + 3 business days)',
+        label: 'Today + 3 Business Days',
+        tag: '📅 Date',
+        priority: isBrace ? 11 : 8
+      },
+      {
+        formula: '{{row_index}}',
+        label: 'Current Row # (1, 2, 3...)',
+        tag: '🔢 Fn',
+        priority: isBrace ? 15 : 4
+      }
+    ];
     const qLower = query.toLowerCase().trim();
 
     for (const col of columns) {
@@ -2462,6 +2497,12 @@
       const isNum = /qty|quantity|price|amount|total|cost|rate|num|count/i.test(col);
 
       const formulas = [
+        {
+          formula: `{{${col}}}`,
+          label: 'Column / Variable',
+          tag: '📄 Col',
+          priority: isBrace ? 18 : 1
+        },
         {
           formula: `({{${col}}} + next business day)`,
           label: 'Next Business Day',
@@ -2550,29 +2591,54 @@
       currentMatches = [];
     };
 
-    const updateMenu = () => {
+    const getTriggerContext = () => {
       const val = inputEl.value || '';
       const cursor = inputEl.selectionStart ?? val.length;
       const textBefore = val.slice(0, cursor);
-      const openIdx = textBefore.lastIndexOf('(');
+      const textAfter = val.slice(cursor);
 
-      if (openIdx === -1) {
+      const openParen = textBefore.lastIndexOf('(');
+      const parenValid = openParen !== -1 && !textBefore.slice(openParen + 1).includes(')');
+
+      const openBrace = textBefore.lastIndexOf('{{');
+      const braceValid = openBrace !== -1 && !textBefore.slice(openBrace + 2).includes('}}');
+
+      if (parenValid && (!braceValid || openParen < openBrace)) {
+        return {
+          mode: 'paren',
+          startIdx: openParen,
+          closeToken: ')',
+          rawQuery: textBefore
+            .slice(openParen + 1)
+            .replace(/^\{\{\s*|\s*\}\}$/g, '')
+            .replace(/^[+*\-\/]\s*/, '')
+            .trim(),
+          textBefore,
+          textAfter
+        };
+      }
+      if (braceValid) {
+        return {
+          mode: 'brace',
+          startIdx: openBrace,
+          closeToken: '}}',
+          rawQuery: textBefore.slice(openBrace + 2).trim(),
+          textBefore,
+          textAfter
+        };
+      }
+      return null;
+    };
+
+    const updateMenu = () => {
+      const ctx = getTriggerContext();
+      if (!ctx) {
         hideMenu();
         return;
       }
 
-      const textBetween = textBefore.slice(openIdx + 1);
-      if (textBetween.includes(')')) {
-        hideMenu();
-        return;
-      }
-
-      const rawQuery = textBetween
-        .replace(/^\{\{\s*|\s*\}\}$/g, '')
-        .replace(/^[+*\-\/]\s*/, '')
-        .trim();
       const cols = getColumnsFn();
-      const suggestions = generateFormulaSuggestions(cols, rawQuery);
+      const suggestions = generateFormulaSuggestions(cols, ctx.rawQuery, ctx.mode);
 
       if (!suggestions || suggestions.length === 0) {
         hideMenu();
@@ -2584,7 +2650,7 @@
 
       menuEl.innerHTML = `
         <div class="ft-autocomplete-header">
-          <span>🧮 FORMULA AUTOCOMPLETE</span>
+          <span>${ctx.mode === 'brace' ? '⚡ FUNCTIONS & COLUMNS' : '🧮 FORMULA AUTOCOMPLETE'}</span>
           <span style="font-size:9px;color:#94a3b8;">↑↓ to navigate, Enter to pick</span>
         </div>
         ${currentMatches
@@ -2617,15 +2683,12 @@
     const selectItem = (idx) => {
       const chosen = currentMatches[idx];
       if (!chosen) return;
-      const val = inputEl.value || '';
-      const cursor = inputEl.selectionStart ?? val.length;
-      const textBefore = val.slice(0, cursor);
-      const textAfter = val.slice(cursor);
-      const openIdx = textBefore.lastIndexOf('(');
+      const ctx = getTriggerContext();
+      if (!ctx) return;
 
-      const closeIdx = textAfter.indexOf(')');
-      const remainderAfter = closeIdx !== -1 ? textAfter.slice(closeIdx + 1) : textAfter;
-      const remainderBefore = openIdx !== -1 ? textBefore.slice(0, openIdx) : textBefore;
+      const closeIdx = ctx.textAfter.indexOf(ctx.closeToken);
+      const remainderAfter = closeIdx !== -1 ? ctx.textAfter.slice(closeIdx + ctx.closeToken.length) : ctx.textAfter;
+      const remainderBefore = ctx.startIdx !== -1 ? ctx.textBefore.slice(0, ctx.startIdx) : ctx.textBefore;
 
       const newVal = remainderBefore + chosen.formula + remainderAfter;
       inputEl.value = newVal;
@@ -3451,8 +3514,10 @@
                       : ''
                   }
                   ${
-                    combinedCols.length > 0 && ['input', 'select', 'navigate'].includes(bMode)
+                    ['input', 'select', 'navigate'].includes(bMode)
                       ? `<div class="ft-pills" style="margin-top:3px;">
+                          <span class="ft-pill ft-formula-pill" data-chain-token="${prefix}:${actIdx}:value:{{today}}" style="font-size:9.5px;" title="Insert today's date">📅 {{today}}</span>
+                          <span class="ft-pill ft-formula-pill" data-chain-token="${prefix}:${actIdx}:value:({{today}} + next business day)" style="font-size:9.5px;" title="Today + next business day">📅 ({{today}} + next biz day)</span>
                           ${combinedCols
                             .slice(0, 6)
                             .map((c) => `<span class="ft-pill" data-chain-token="${prefix}:${actIdx}:value:{{${escapeHtml(c)}}}" style="font-size:9.5px;">+ {{${escapeHtml(c)}}}</span>`)
@@ -3540,7 +3605,13 @@
                         <option value="gt" ${nCond === 'gt' ? 'selected' : ''}>Greater (&gt;)</option>
                         <option value="lt" ${nCond === 'lt' ? 'selected' : ''}>Less (&lt;)</option>
                       </select>
-                      <input class="ft-input" data-chain-field="${prefix}:${actIdx}:value" value="${escapeHtml(actObj.value || '')}" placeholder="Expected value..." style="font-size:10.5px;" />
+                      <div style="position:relative;">
+                        <input class="ft-input" data-chain-field="${prefix}:${actIdx}:value" value="${escapeHtml(actObj.value || '')}" placeholder="Expected value (or {{today}})..." style="font-size:10.5px;" autocomplete="off" />
+                        <div class="ft-autocomplete-menu"></div>
+                      </div>
+                    </div>
+                    <div class="ft-pills" style="margin-top:2px;">
+                      <span class="ft-pill ft-formula-pill" data-chain-set="${prefix}:${actIdx}:value:{{today}}" style="font-size:9px;padding:1px 5px;" title="Compare against today's date regardless of format">📅 {{today}}</span>
                     </div>
 
                     <div style="border-top:1px solid #334155;padding-top:4px;">
@@ -4011,8 +4082,9 @@
             }
 
             ${
-              combinedCols.length > 0 || prevSteps.length > 0
+              combinedCols.length > 0 || prevSteps.length > 0 || draft.type === 'condition' || draft.type === 'verify' || draft.type === 'input'
                 ? `<div class="ft-pills">
+                    <span class="ft-pill ft-formula-pill" data-token="{{today}}" title="Today's date (auto-parses and compares any date format)">📅 {{today}}</span>
                     ${masterColumns
                       .map((c) => `<span class="ft-pill" data-token="{{${escapeHtml(c)}}}" title="Insert CSV column">+ {{${escapeHtml(c)}}}</span>`)
                       .join('')}

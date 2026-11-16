@@ -2,6 +2,22 @@
 
 All notable changes to **Domuto | Visual Browser Automation** will be documented in this file.
 
+## [1.1.2] - 2026-11-16
+
+### Added
+- **`{{today}}` Function & Format-Agnostic Date Comparisons (`csv_utils.js`)**:
+  - Added `{{today}}` (case-insensitive) to resolve today's local date (`MM-DD-YYYY`) standalone or inside date arithmetic formulas like `({{today}} + next business day)` and `({{today}} + 1 day)`.
+  - Added `extractAndParseDate()` to extract and normalize dates from any common format or surrounding text (`MM-DD-YYYY`, `MM/DD/YYYY`, `YYYY-MM-DD`, `MM.DD.YYYY`, `DD-MMM-YYYY`, `Nov 16, 2026`, 2-digit years, ISO timestamps, or embedded strings).
+  - Updated `evaluateVerification()` so `Equals (==)`, `Not Equals (!=)`, `Greater (>)`, `Greater or Equal (>=)`, `Less (<)`, and `Less or Equal (<=)` compare calendar dates cleanly when comparing against a date such as `{{today}}`, while safely returning `false` on non-date text.
+- **Dual-Trigger Function & Formula Autocomplete (`{{` and `(`)** (`content.js`, `dashboard.js`):
+  - Typing `{{` (e.g. `{{tod` or `{{PO`) now opens the **⚡ FUNCTIONS & COLUMNS** autocomplete menu alongside `(` formula autocomplete, including inside **Nested IF** expected value inputs.
+  - Added built-in suggestions for `{{today}}`, `({{today}} + next business day)`, `({{today}} + 1 day)`, `({{today}} - 1 day)`, `({{today}} + 3 business days)`, `{{row_index}}`, and all table/CSV columns.
+  - Added `📅 {{today}}` and `📅 ({{today}} + next biz day)` quick-insert pills to chained action inputs, Nested IFs, and the Studio Dashboard.
+
+### Fixed
+- **Content Security Policy (CSP) Compliance for jQuery Datepicker Sync** (`content.js`, `background.js`):
+  - Replaced inline `<script>` injection in `simulateRealisticInput` with Manifest V3 `chrome.scripting.executeScript({ world: 'MAIN' })` via `SYNC_MAIN_WORLD_INPUT`, eliminating CSP `script-src` errors on strict websites while preserving jQuery datepicker synchronization.
+
 ## [1.1.1] - 2026-11-02
 
 ### Fixed
